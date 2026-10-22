@@ -1,58 +1,68 @@
 package com.example.tp1.ui.theme
 
-import android.app.Activity
-import android.os.Build
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.Shapes
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 
-private val DarkColorScheme = darkColorScheme(
-    primary = Purple80,
-    secondary = PurpleGrey80,
-    tertiary = Pink80
-)
-
+// The approved Stitch palette stays stable across wallpaper and system theme changes.
 private val LightColorScheme = lightColorScheme(
-    primary = Purple40,
-    secondary = PurpleGrey40,
-    tertiary = Pink40
-
-    /* Other default colors to override
-    background = Color(0xFFFFFBFE),
-    surface = Color(0xFFFFFBFE),
+    primary = Blue,
     onPrimary = Color.White,
+    primaryContainer = PaleBlue,
+    onPrimaryContainer = InkBlue,
+    inversePrimary = PaleBlue,
+    secondary = Slate,
     onSecondary = Color.White,
+    secondaryContainer = PaleSlate,
+    onSecondaryContainer = InkSlate,
+    tertiary = Teal,
     onTertiary = Color.White,
-    onBackground = Color(0xFF1C1B1F),
-    onSurface = Color(0xFF1C1B1F),
-    */
+    tertiaryContainer = PaleTeal,
+    onTertiaryContainer = InkTeal,
+    background = Canvas,
+    onBackground = Ink,
+    surface = Canvas,
+    onSurface = Ink,
+    surfaceVariant = SurfaceHighest,
+    onSurfaceVariant = SecondaryInk,
+    surfaceTint = Blue,
+    surfaceBright = Canvas,
+    surfaceDim = SurfaceHighest,
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = SurfaceLow,
+    surfaceContainer = SurfaceContainer,
+    surfaceContainerHigh = SurfaceHigh,
+    surfaceContainerHighest = SurfaceHighest,
+    inverseSurface = Ink,
+    inverseOnSurface = Canvas,
+    outline = Outline,
+    outlineVariant = Divider,
+    error = Red,
+    onError = Color.White,
+    errorContainer = PaleRed,
+    onErrorContainer = InkRed
 )
 
 @Composable
-fun TP1Theme(
-    darkTheme: Boolean = isSystemInDarkTheme(),
-    // Dynamic color is available on Android 12+
-    dynamicColor: Boolean = true,
-    content: @Composable () -> Unit
-) {
-    val colorScheme = when {
-        dynamicColor && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
-            val context = LocalContext.current
-            if (darkTheme) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
-        }
-
-        darkTheme -> DarkColorScheme
-        else -> LightColorScheme
-    }
-
+fun TP1Theme(content: @Composable () -> Unit) {
     MaterialTheme(
-        colorScheme = colorScheme,
+        colorScheme = LightColorScheme,
         typography = Typography,
+        shapes = Shapes(small = RoundedCornerShape(8.dp)),
         content = content
     )
 }
+
+@Composable
+internal fun shellTextFieldColors() = TextFieldDefaults.colors(
+    focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerLowest,
+    focusedIndicatorColor = Color.Transparent,
+    unfocusedIndicatorColor = Color.Transparent,
+    cursorColor = MaterialTheme.colorScheme.primary
+)

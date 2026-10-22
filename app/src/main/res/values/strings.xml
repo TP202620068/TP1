@@ -1,3 +1,20 @@
 <resources>
     <string name="app_name">TP1</string>
+    <string name="tab_explorer">Explorador</string>
+    <string name="tab_sources">Fuentes</string>
+    <string name="tab_chat">Chat</string>
+    <string name="add_source">Añadir</string>
+    <string name="selected_sources">Fuentes seleccionadas</string>
+    <string name="files">Archivos</string>
+    <string name="search_hint">Buscar contenido o archivo…</string>
+    <string name="search_label">Buscar archivos</string>
+    <string name="no_files_title">Sin archivos</string>
+    <string name="no_files_description">Añade una fuente para empezar.</string>
+    <string name="go_to_sources">Ir a Fuentes</string>
+    <string name="no_sources_title">Sin fuentes seleccionadas</string>
+    <string name="source_selection_unavailable">La selección de archivos aún no está disponible.</string>
+    <string name="chat_preview_notice">Vista previa</string>
+    <string name="chat_hint">Pregunta sobre tus archivos…</string>
+    <string name="chat_input_label">Tu pregunta</string>
+    <string name="send_question">Enviar pregunta</string>
 </resources>
