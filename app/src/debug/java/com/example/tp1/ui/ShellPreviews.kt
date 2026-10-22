@@ -7,6 +7,11 @@ import com.example.tp1.ui.components.FileKind
 import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.ui.components.FileRow
 import com.example.tp1.ui.theme.TP1Theme
+import com.example.tp1.sources.SelectedSource
+import com.example.tp1.sources.SourceKind
+import com.example.tp1.sources.SourceMetadata
+import com.example.tp1.sources.SourceRecord
+import com.example.tp1.ui.screens.SourceSelectionScreen
 
 private object ShellFixtures {
     val files = listOf(
@@ -19,25 +24,12 @@ private object ShellFixtures {
         FileListItem("Escaneo de documento.png", FileKind.Image, "4,2 MB · 15 feb 2024"),
         FileListItem("Garantía electrodomésticos.pdf", FileKind.Pdf, "1,8 MB · 11 nov 2023")
     )
-    val sources = listOf(
-        FileListItem("Documentos personales", FileKind.Folder, "Documentos"),
-        FileListItem("Facturas", FileKind.Folder, "Descargas / Facturas"),
-        FileListItem("Hogar y Finanzas", FileKind.Folder, "Documentos / Finanzas"),
-        FileListItem("Contrato_alquiler_firmado.pdf", FileKind.Pdf, "Documentos / Legal · 2,4 MB"),
-        FileListItem("Manual_garantia_laptop.pdf", FileKind.Pdf, "Descargas · 4,1 MB")
-    )
 }
 
 @Preview(name = "Explorador", device = "spec:width=390dp,height=844dp,dpi=440", showSystemUi = true)
 @Composable
 private fun ExplorerPreview() {
     TP1Theme { TP1App(files = ShellFixtures.files) }
-}
-
-@Preview(name = "Fuentes", device = "spec:width=390dp,height=844dp,dpi=440", showSystemUi = true)
-@Composable
-private fun SourcesPreview() {
-    TP1Theme { TP1App(initialTab = AppTab.Sources, sources = ShellFixtures.sources) }
 }
 
 @Preview(name = "Chat", device = "spec:width=390dp,height=844dp,dpi=440", showSystemUi = true)
@@ -65,5 +57,28 @@ private fun LongFilenamePreview() {
                 )
             )
         }
+    }
+}
+
+@Preview(name = "Selección vacía", widthDp = 390, heightDp = 844, showSystemUi = true)
+@Composable
+private fun EmptySelectionPreview() = SelectionPreview(emptyList())
+
+@Preview(name = "Selección con texto grande", widthDp = 320, heightDp = 740, fontScale = 2f)
+@Composable
+private fun PopulatedSelectionPreview() = SelectionPreview(listOf(
+    SelectedSource(
+        SourceRecord("preview", SourceKind.Document),
+        SourceMetadata("Contrato_de_alquiler_de_vivienda_firmado_octubre_2026.pdf", "application/pdf", 12000, null)
+    )
+))
+
+@Composable
+private fun SelectionPreview(sources: List<SelectedSource>) {
+    TP1Theme {
+        SourceSelectionScreen(
+            sources = sources, busy = false, storageReady = true, canClose = true,
+            message = null, onPick = {}, onRemove = {}, onClose = {}, onRetry = {}
+        )
     }
 }

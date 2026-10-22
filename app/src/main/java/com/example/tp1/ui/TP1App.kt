@@ -20,14 +20,14 @@ import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.ui.screens.ChatComposer
 import com.example.tp1.ui.screens.ChatScreen
 import com.example.tp1.ui.screens.ExplorerScreen
-import com.example.tp1.ui.screens.SourcesScreen
 
 @Composable
 internal fun TP1App(
     modifier: Modifier = Modifier,
     initialTab: AppTab = AppTab.Explorer,
     files: List<FileListItem> = emptyList(),
-    sources: List<FileListItem> = emptyList()
+    onAddSource: () -> Unit = {},
+    sourceMessage: String? = null
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(initialTab) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -43,7 +43,7 @@ internal fun TP1App(
         modifier = modifier.fillMaxSize().imePadding(),
         containerColor = MaterialTheme.colorScheme.background,
         contentWindowInsets = WindowInsets.safeDrawing,
-        topBar = { AppHeader(selectedTab) },
+        topBar = { AppHeader(selectedTab, onAddSource = onAddSource) },
         bottomBar = {
             Surface(color = MaterialTheme.colorScheme.background) {
                 Column {
@@ -62,9 +62,8 @@ internal fun TP1App(
                     onQueryChange = { query = it },
                     files = files,
                     contentPadding = padding,
-                    onSourcesClick = { selectTab(AppTab.Sources) }
+                    message = sourceMessage
                 )
-                AppTab.Sources -> SourcesScreen(sources = sources, contentPadding = padding)
                 AppTab.Chat -> ChatScreen(contentPadding = padding)
             }
         }

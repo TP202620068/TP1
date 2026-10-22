@@ -5,6 +5,7 @@ import android.content.pm.ActivityInfo
 import android.content.res.Configuration
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasClickAction
@@ -15,6 +16,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -23,19 +25,41 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Before
+import org.junit.After
 
 class ShellNavigationTest {
     @get:Rule
     val compose = createAndroidComposeRule<MainActivity>()
 
+    private val picker = PickerRobot()
+
+    @Before
+    fun startWithoutSources() {
+        picker.resetSources()
+        compose.activityRule.scenario.recreate()
+        compose.awaitSources()
+    }
+
+    @After fun cleanUp() = picker.cleanUp()
+
     @Test
     fun tabsAndTypedTextSurviveActivityRecreation() {
         compose.onNode(hasText("Explorador") and hasClickAction()).assertIsSelected()
         compose.onNodeWithContentDescription("Buscar archivos").performTextInput("documentos")
+        compose.waitUntil(5_000) {
+            ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == true
+        }
+        compose.runOnIdle { compose.activity.window.insetsController?.hide(android.view.WindowInsets.Type.ime()) }
+        compose.waitUntil(5_000) {
+            ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == false
+        }
 
-        compose.onNode(hasText("Fuentes") and hasClickAction()).performClick().assertIsSelected()
-        compose.onNodeWithText("Sin fuentes seleccionadas").assertIsDisplayed()
-        compose.onNodeWithText("Añadir").assertIsNotEnabled()
+        compose.onNodeWithText("Sin archivos").assertIsDisplayed()
+        compose.onNodeWithText("Fuentes").assertDoesNotExist()
+        compose.onNodeWithText("Añadir").assertIsEnabled()
 
         compose.onNode(hasText("Chat") and hasClickAction()).performClick().assertIsSelected()
         compose.onNodeWithContentDescription("Enviar pregunta").assertIsNotEnabled()
@@ -65,6 +89,21 @@ class ShellNavigationTest {
         compose.onNode(hasText("Chat") and hasClickAction()).assertIsSelected()
         compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("¿Qué dice mi contrato?")
         compose.onNode(hasText("Explorador") and hasClickAction()).performClick().assertIsSelected()
+        compose.onNodeWithContentDescription("Buscar archivos").assertTextEquals("documentos")
+        compose.onNode(hasText("Chat") and hasClickAction()).performClick()
+        compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("¿Qué dice mi contrato?")
+        compose.runOnIdle { compose.activity.window.insetsController?.hide(android.view.WindowInsets.Type.ime()) }
+        compose.waitUntil(5_000) {
+            ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
+                ?.isVisible(WindowInsetsCompat.Type.ime()) == false
+        }
+        compose.onNode(hasText("Explorador") and hasClickAction()).performClick()
+        compose.onNodeWithText("Añadir").performClick()
+        androidx.test.espresso.Espresso.pressBack()
+        compose.onNode(hasText("Explorador") and hasClickAction()).assertIsSelected()
+        compose.onNodeWithText("Añadir").performClick()
+        compose.onNodeWithText("Listo").performScrollTo().performClick()
+        compose.onNode(hasText("Explorador") and hasClickAction()).assertIsSelected()
         compose.onNodeWithContentDescription("Buscar archivos").assertTextEquals("documentos")
         compose.onNode(hasText("Chat") and hasClickAction()).performClick()
         compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("¿Qué dice mi contrato?")

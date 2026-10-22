@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.Chat
 import androidx.compose.material.icons.outlined.Folder
-import androidx.compose.material.icons.outlined.FolderCopy
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -35,7 +34,6 @@ import com.example.tp1.R
 
 internal enum class AppTab(@param:StringRes val label: Int, val icon: ImageVector) {
     Explorer(R.string.tab_explorer, Icons.Outlined.Folder),
-    Sources(R.string.tab_sources, Icons.Outlined.FolderCopy),
     Chat(R.string.tab_chat, Icons.AutoMirrored.Outlined.Chat)
 }
 

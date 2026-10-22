@@ -14,7 +14,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.TextField
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -40,7 +40,7 @@ internal fun ExplorerScreen(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     onQueryChange: (String) -> Unit = {},
-    onSourcesClick: () -> Unit = {}
+    message: String? = null
 ) {
     val focusManager = LocalFocusManager.current
     val searchLabel = stringResource(R.string.search_label)
@@ -72,6 +72,16 @@ internal fun ExplorerScreen(
                 colors = shellTextFieldColors()
             )
         }
+        message?.let { text ->
+            item {
+                Text(
+                    text = text,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)
+                )
+            }
+        }
         if (files.isNotEmpty()) {
             item {
                 SectionHeading(
@@ -87,9 +97,7 @@ internal fun ExplorerScreen(
                     title = stringResource(R.string.no_files_title),
                     description = stringResource(R.string.no_files_description),
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 32.dp, vertical = 48.dp)
-                ) {
-                    TextButton(onClick = onSourcesClick) { Text(stringResource(R.string.go_to_sources)) }
-                }
+                )
             }
         }
         items(files) { file -> FileRow(file, modifier = Modifier.padding(horizontal = 16.dp)) }

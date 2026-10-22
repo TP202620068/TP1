@@ -21,7 +21,7 @@ import com.example.tp1.R
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun AppHeader(tab: AppTab, modifier: Modifier = Modifier) {
+internal fun AppHeader(tab: AppTab, modifier: Modifier = Modifier, onAddSource: () -> Unit = {}) {
     TopAppBar(
         modifier = modifier,
         expandedHeight = 56.dp,
@@ -33,8 +33,8 @@ internal fun AppHeader(tab: AppTab, modifier: Modifier = Modifier) {
             )
         },
         actions = {
-            if (tab == AppTab.Sources) {
-                TextButton(onClick = {}, enabled = false) {
+            if (tab == AppTab.Explorer) {
+                TextButton(onClick = onAddSource) {
                     Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
                     Text(stringResource(R.string.add_source), modifier = Modifier.padding(start = 4.dp))
                 }

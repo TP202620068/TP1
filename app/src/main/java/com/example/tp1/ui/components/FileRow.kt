@@ -33,7 +33,11 @@ internal data class FileListItem(
 )
 
 @Composable
-internal fun FileRow(item: FileListItem, modifier: Modifier = Modifier) {
+internal fun FileRow(
+    item: FileListItem,
+    modifier: Modifier = Modifier,
+    trailingContent: @Composable () -> Unit = {}
+) {
     val colors = MaterialTheme.colorScheme
     val icon = when (item.kind) {
         FileKind.Folder -> Icons.Rounded.Folder
@@ -88,6 +92,7 @@ internal fun FileRow(item: FileListItem, modifier: Modifier = Modifier) {
                     )
                 }
             }
+            trailingContent()
         }
         HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.35f))
     }
