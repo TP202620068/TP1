@@ -11,14 +11,18 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.lifecycle.lifecycleScope
+import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
 import com.example.tp1.sources.sourcePickerIntent
 import com.example.tp1.ui.SourceFlow
 import com.example.tp1.ui.theme.TP1Theme
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val sources: SourcesViewModel by viewModels()
+    private val browser: BrowserViewModel by viewModels()
     private val documents = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         receiveSources(it, SourceKind.Document)
     }
@@ -35,20 +39,26 @@ class MainActivity : ComponentActivity() {
         window.isNavigationBarContrastEnforced = false
         setContent {
             TP1Theme {
-                SourceFlow(sources, onPick = { kind ->
+                SourceFlow(sources, browser, onPick = { kind ->
                     try {
                         (if (kind == SourceKind.Tree) tree else documents).launch(sourcePickerIntent(kind))
                     } catch (_: ActivityNotFoundException) {
                         sources.pickerUnavailable()
                     }
-                })
+                }, onOpen = { entry -> browser.open(entry) { startActivity(it) } },
+                    onRefresh = { refreshBrowser() })
             }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        if (!sources.state.value.restoring) sources.refresh()
+        if (!sources.state.value.restoring) refreshBrowser()
+    }
+
+    private fun refreshBrowser() = lifecycleScope.launch {
+        sources.refresh().join()
+        browser.setSources(sources.state.value.sources, refresh = true)
     }
 
     private fun receiveSources(result: ActivityResult, kind: SourceKind) {

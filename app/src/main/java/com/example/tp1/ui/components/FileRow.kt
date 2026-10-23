@@ -29,7 +29,8 @@ internal enum class FileKind { Folder, Pdf, Image, Document }
 internal data class FileListItem(
     val name: String,
     val kind: FileKind,
-    val metadata: String? = null
+    val metadata: String? = null,
+    val id: String? = null
 )
 
 @Composable

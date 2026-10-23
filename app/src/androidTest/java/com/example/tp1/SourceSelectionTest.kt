@@ -2,17 +2,26 @@ package com.example.tp1
 
 import android.content.Intent
 import android.net.Uri
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.core.net.toUri
+import androidx.compose.ui.graphics.asAndroidBitmap
+import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourceStore
 import com.example.tp1.sources.sourcePickerIntent
@@ -23,6 +32,7 @@ import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import java.io.ByteArrayOutputStream
 
 class SourceSelectionTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -39,7 +49,32 @@ class SourceSelectionTest {
         compose.onNodeWithText("Añadir archivos").assertDoesNotExist()
     }
 
-    @After fun cleanUp() = robot.cleanUp()
+    @After fun cleanUp() {
+        robot.cleanUp()
+        shell("rm -rf /sdcard/Download/${robot.folderName}")
+    }
+
+    private fun shell(command: String): String = ParcelFileDescriptor.AutoCloseInputStream(
+        InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(command)
+    ).bufferedReader().use { it.readText() }
+
+    private fun fixtureCall(method: String, arg: String? = null): Bundle {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        instrumentation.uiAutomation.adoptShellPermissionIdentity("android.permission.MANAGE_DOCUMENTS")
+        return try {
+            checkNotNull(instrumentation.targetContext.contentResolver.call(
+                "content://com.example.tp1.test.documents".toUri(), method, arg, null
+            ))
+        } finally { instrumentation.uiAutomation.dropShellPermissionIdentity() }
+    }
+
+    private fun capture(name: String) {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val image = compose.onRoot().captureToImage().asAndroidBitmap()
+        java.io.File(context.getExternalFilesDir(null), "source-status-$name.png").outputStream().use {
+            image.compress(Bitmap.CompressFormat.PNG, 100, it)
+        }
+    }
 
     private fun openSelection() {
         compose.onNodeWithText("Añadir").performClick()
@@ -225,5 +260,110 @@ class SourceSelectionTest {
         assertTrue(model.state.value.storageReady)
         assertNull(model.state.value.message)
         compose.onNodeWithText("Reintentar").assertDoesNotExist()
+    }
+
+    @Test
+    fun movedFileRemainsAccessibleInSelectedFolderWithoutGlobalWarningOrForgettingSelection() {
+        val bitmap = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLUE) }
+        val png = ByteArrayOutputStream().use { output ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            bitmap.recycle()
+            output.toByteArray()
+        }
+        robot.createFile("Captura.png", mime = "image/png", bytes = png)
+        robot.createFile("Aleatorio.txt")
+        robot.createFile("Dentro.txt", directory = "Documentos")
+        openSelection()
+        compose.onNodeWithText("Elegir carpeta").performClick()
+        robot.pickFolder("Documentos")
+        compose.awaitSources()
+        for (name in listOf("Captura.png", "Aleatorio.txt")) {
+            compose.onNodeWithText("Elegir archivos").performClick()
+            robot.pickStorageDocument(name)
+            compose.awaitSources()
+        }
+        robot.assertReadOnlyGrants(3)
+        compose.onNodeWithText("Listo").performScrollTo().performClick()
+        lateinit var model: SourcesViewModel
+        lateinit var browser: BrowserViewModel
+        compose.runOnIdle {
+            model = ViewModelProvider(compose.activity)[SourcesViewModel::class.java]
+            browser = ViewModelProvider(compose.activity)[BrowserViewModel::class.java]
+        }
+        val before = model.state.value.sources.single { it.metadata?.name == "Captura.png" }.record
+        assertEquals("com.android.externalstorage.documents", before.uri.toUri().authority)
+        // External fixture mutation, performed by the test shell rather than TP1's read-only grants.
+        shell("mv /sdcard/Download/${robot.folderName}/Captura.png /sdcard/Download/${robot.folderName}/Documentos/Captura.png")
+        compose.runOnIdle { model.refresh() }
+        compose.awaitSources()
+        compose.waitUntil(10_000) { browser.state.value.entries.size == 2 }
+        assertEquals(setOf("Documentos", "Aleatorio.txt"), browser.state.value.entries.map { it.metadata.name }.toSet())
+        assertNull(model.state.value.message)
+        assertEquals(3, model.state.value.sources.size)
+        assertFalse(model.state.value.sources.single { it.record.uri == before.uri }.available)
+        compose.onNodeWithText("Añadir archivos").assertDoesNotExist()
+        compose.onNodeWithText("Captura.png").assertDoesNotExist()
+        capture("roots-after-move")
+
+        compose.onNodeWithText("Documentos").performClick()
+        compose.waitUntil(10_000) { !browser.state.value.loading && browser.state.value.entries.size == 2 }
+        compose.onNodeWithText("Captura.png").assertIsDisplayed()
+        val moved = browser.state.value.entries.single { it.metadata.name == "Captura.png" }
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        context.contentResolver.openInputStream(moved.uri.toUri())!!.use { assertEquals(0x89, it.read()) }
+        assertNotEquals(before.uri, moved.uri)
+        capture("moved-file-in-folder")
+
+        openSelection()
+        compose.onNodeWithText("No disponible").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithContentDescription("Quitar Captura.png").performScrollTo().assertIsEnabled()
+        capture("unavailable-selection")
+        compose.onNodeWithText("Reintentar").performScrollTo().performClick()
+        compose.awaitSources()
+        assertEquals(3, SourceStore(context).restore().sources.size)
+        robot.assertReadOnlyGrants(3)
+        compose.onNodeWithText("Listo").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithText("Captura.png").assertIsDisplayed()
+        assertNull(model.state.value.message)
+    }
+
+    @Test
+    fun temporaryProviderFailureKeepsGrantAndSelectionAndRetryRecoversWithoutReselection() {
+        val uri = fixtureCall("fixture-authorize", "file").getString("uri")!!
+        lateinit var model: SourcesViewModel
+        openSelection()
+        compose.runOnIdle {
+            model = ViewModelProvider(compose.activity)[SourcesViewModel::class.java]
+            model.add(listOf(uri), SourceKind.Document,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+        }
+        compose.awaitSources()
+        compose.onNodeWithText("Listo").performScrollTo().performClick()
+        compose.onNodeWithText("file").assertIsDisplayed()
+        fixtureCall("fixture-file-unavailable", "true")
+        compose.runOnIdle { model.refresh() }
+        compose.awaitSources()
+        assertFalse(model.state.value.sources.single().available)
+        assertEquals(uri, model.state.value.sources.single().record.uri)
+        assertNull(model.state.value.message)
+        robot.assertReadOnlyGrants(1)
+        compose.onNodeWithText("Sin archivos").assertIsDisplayed()
+        compose.onNodeWithText("Añadir archivos").assertDoesNotExist()
+        openSelection()
+        compose.onNodeWithText("No disponible").assertIsDisplayed()
+        capture("temporary-provider-failure")
+        compose.onNodeWithText("Listo").performScrollTo().assertIsEnabled()
+        fixtureCall("fixture-file-unavailable", "false")
+        compose.onNodeWithText("Reintentar").performScrollTo().performClick()
+        compose.awaitSources()
+        assertTrue(model.state.value.sources.single().available)
+        assertEquals(uri, model.state.value.sources.single().record.uri)
+        assertNull(model.state.value.message)
+        compose.onNodeWithText("No disponible").assertDoesNotExist()
+        compose.onNodeWithText("Reintentar").assertDoesNotExist()
+        robot.assertReadOnlyGrants(1)
+        compose.onNodeWithText("Listo").performScrollTo().performClick()
+        compose.onNodeWithText("file").assertIsDisplayed()
+        capture("provider-recovered")
     }
 }

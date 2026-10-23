@@ -145,6 +145,11 @@ internal fun SourceSelectionScreen(
                     )
                 }
             }
+            if (storageReady && sources.any { !it.available }) {
+                item {
+                    TextButton(onClick = onRetry, enabled = !busy) { Text(stringResource(R.string.retry)) }
+                }
+            }
             item {
                 Button(onClick = onClose, enabled = canClose, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.done_selection))

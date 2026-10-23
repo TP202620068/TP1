@@ -1,7 +1,5 @@
 package com.example.tp1.ui
 
-import android.text.format.DateFormat
-import android.text.format.Formatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -10,26 +8,34 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.example.tp1.R
-import com.example.tp1.sources.SelectedSource
+import com.example.tp1.browser.BrowserEntry
+import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
-import com.example.tp1.ui.components.FileKind
-import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.ui.screens.SourceSelectionScreen
-import java.util.Date
 
 @Composable
-internal fun SourceFlow(viewModel: SourcesViewModel, onPick: (SourceKind) -> Unit) {
+internal fun SourceFlow(
+    viewModel: SourcesViewModel,
+    browser: BrowserViewModel,
+    onPick: (SourceKind) -> Unit,
+    onOpen: (BrowserEntry) -> Unit,
+    onRefresh: () -> Unit
+) {
     val state by viewModel.state.collectAsState()
+    val browsing by browser.state.collectAsState()
     val shellState = rememberSaveableStateHolder()
+    LaunchedEffect(state.sources, state.restoring) {
+        if (!state.restoring) browser.setSources(state.sources)
+    }
     Surface(color = MaterialTheme.colorScheme.background) {
         when {
             state.restoring -> Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
@@ -50,34 +56,22 @@ internal fun SourceFlow(viewModel: SourcesViewModel, onPick: (SourceKind) -> Uni
                 )
             }
             else -> shellState.SaveableStateProvider("shell") {
-                val items = state.sources.filter { it.available }.map { it.toFileListItem() }
                 TP1App(
-                    files = items,
+                    files = browsing.entries.map { it.toFileListItem() },
+                    browser = browsing,
+                    onEntryClick = { id ->
+                        browsing.entries.firstOrNull { it.uri == id }?.let { entry ->
+                            if (entry.directory) browser.enter(entry) else onOpen(entry)
+                        }
+                    },
+                    onAncestor = browser::ancestor,
+                    onBrowserBack = browser::back,
+                    onRetry = onRefresh,
+                    onMessageDismissed = browser::dismissMessage,
                     onAddSource = viewModel::selectSources,
                     sourceMessage = state.message?.let { stringResource(it) }
                 )
             }
         }
     }
-}
-
-@Composable
-internal fun SelectedSource.toFileListItem(): FileListItem {
-    val context = LocalContext.current
-    val details = metadata
-    val kind = when {
-        record.kind == SourceKind.Tree -> FileKind.Folder
-        details?.mimeType == "application/pdf" -> FileKind.Pdf
-        details?.mimeType?.startsWith("image/") == true -> FileKind.Image
-        else -> FileKind.Document
-    }
-    val information = if (!available) stringResource(R.string.source_unavailable) else listOfNotNull(
-        details?.size?.takeIf { kind != FileKind.Folder }?.let { Formatter.formatShortFileSize(context, it) },
-        details?.modified?.let { DateFormat.getMediumDateFormat(context).format(Date(it)) }
-    ).joinToString(" · ").takeIf { it.isNotEmpty() }
-    return FileListItem(
-        name = details?.name ?: record.name ?: stringResource(R.string.unnamed_source),
-        kind = kind,
-        metadata = information
-    )
 }

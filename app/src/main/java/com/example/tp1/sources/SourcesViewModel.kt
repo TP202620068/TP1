@@ -31,13 +31,8 @@ internal class SourcesViewModel(application: Application, private val savedState
             storageReady = true,
             sources = restored.sources,
             message = state.value.message?.takeUnless {
-                it == R.string.source_access_lost || it == R.string.source_records_damaged ||
-                    it == R.string.source_restore_error
-            } ?: when {
-                restored.damagedRecords -> R.string.source_records_damaged
-                restored.sources.any { !it.available } -> R.string.source_access_lost
-                else -> null
-            }
+                it == R.string.source_records_damaged || it == R.string.source_restore_error
+            } ?: R.string.source_records_damaged.takeIf { restored.damagedRecords }
         ))
     }
 

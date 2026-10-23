@@ -34,15 +34,18 @@ internal class PickerRobot {
         listOf("sources.json", "sources.json.bak", "sources.json.new").forEach(context::deleteFile)
     }
 
-    fun createFile(name: String): Uri {
+    fun createFile(
+        name: String, directory: String = "", mime: String = "text/plain",
+        bytes: ByteArray = "TP1 source selection fixture\n".toByteArray()
+    ): Uri {
         val values = ContentValues().apply {
             put(MediaStore.Downloads.DISPLAY_NAME, name)
-            put(MediaStore.Downloads.MIME_TYPE, "text/plain")
-            put(MediaStore.Downloads.RELATIVE_PATH, "Download/$folderName/")
+            put(MediaStore.Downloads.MIME_TYPE, mime)
+            put(MediaStore.Downloads.RELATIVE_PATH, "Download/$folderName/$directory/")
         }
         val uri = checkNotNull(context.contentResolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
-        context.contentResolver.openOutputStream(uri)!!.use { it.write("TP1 source selection fixture\n".toByteArray()) }
-        fixtures[name] = uri
+        context.contentResolver.openOutputStream(uri)!!.use { it.write(bytes) }
+        fixtures["$directory/$name"] = uri
         return uri
     }
 
@@ -51,66 +54,110 @@ internal class PickerRobot {
         fixtures.values.forEach { context.contentResolver.delete(it, null, null) }
     }
 
-    fun deleteFile(name: String) { context.contentResolver.delete(checkNotNull(fixtures[name]), null, null) }
+    fun deleteFile(name: String, directory: String = "") {
+        context.contentResolver.delete(checkNotNull(fixtures["$directory/$name"]), null, null)
+    }
 
     fun pickDocument(name: String) {
         openDownloads()
-        click(folderName)
-        click(name)
+        click(folderName, documentItem = true)
+        click(name, documentItem = true)
         awaitApp()
     }
 
     fun pickMultiple(first: String, second: String) {
         openDownloads()
-        click(folderName)
-        click(first, longClick = true)
-        click(second)
+        click(folderName, documentItem = true)
+        click(first, longClick = true, documentItem = true)
+        click(second, documentItem = true)
         click("Select", alternative = "Open")
         awaitApp()
     }
 
-    fun pickFolder() {
+    private fun openStorageFixture() {
         awaitPackage { it.endsWith(".documentsui") }
-        click("Download")
-        click(folderName)
+        openProviderRoot(android.os.Build.MODEL)
+        click("Download", documentItem = true)
+        click(folderName, documentItem = true)
+    }
+
+    fun pickStorageDocument(name: String) {
+        openStorageFixture()
+        click(name, documentItem = true)
+        awaitApp()
+    }
+
+    fun pickFolder(child: String? = null) {
+        openStorageFixture()
+        child?.let { click(it, documentItem = true) }
         click("Use this folder")
         click("Allow")
         awaitApp()
     }
 
     private fun openDownloads() {
-        click("Show roots")
-        click("Downloads")
+        awaitPackage { it.endsWith(".documentsui") }
+        openProviderRoot("Downloads")
+    }
+
+    private fun activeRoot(): AccessibilityNodeInfo? {
+        automation.clearCache()
+        return automation.rootInActiveWindow
+    }
+
+    private fun rootsList(): AccessibilityNodeInfo? = flatten(activeRoot()).firstOrNull {
+        it.isVisibleToUser && it.viewIdResourceName?.endsWith(":id/roots_list") == true
+    }
+
+    private fun openProviderRoot(label: String) {
+        if (rootsList() == null) click("Show roots")
+        click(label, inRoots = true)
     }
 
     fun back() {
-        // Cancel at a provider root so Back does not merely leave a remembered subfolder.
+        // A remembered picker stack may consume Back before cancelling. Never send Back after TP1 returns.
         openDownloads()
-        instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        repeat(4) {
+            instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            val deadline = SystemClock.uptimeMillis() + 2_000
+            while (SystemClock.uptimeMillis() < deadline) {
+                if (activeRoot()?.packageName?.toString() == context.packageName) return
+                SystemClock.sleep(100)
+            }
+            if (activeRoot()?.packageName?.toString()?.endsWith(".documentsui") != true) {
+                awaitApp()
+                return
+            }
+        }
         awaitApp()
     }
 
     private fun awaitApp() = awaitPackage { it == context.packageName }
 
-    private fun awaitPackage(matches: (String) -> Boolean) {
+    fun visibleText(): String = flatten(activeRoot()).mapNotNull { it.text }.joinToString("\n")
+
+    fun awaitPackage(matches: (String) -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
-            if (matches(automation.rootInActiveWindow?.packageName?.toString().orEmpty())) {
+            if (matches(activeRoot()?.packageName?.toString().orEmpty())) {
                 SystemClock.sleep(300)
                 return
             }
             SystemClock.sleep(100)
         }
-        error("Unexpected active window: ${flatten(automation.rootInActiveWindow).mapNotNull { it.text ?: it.contentDescription }}")
+        error("Unexpected active window: ${flatten(activeRoot()).mapNotNull { it.text ?: it.contentDescription }}")
     }
 
-    fun click(label: String, longClick: Boolean = false, alternative: String? = null) {
+    fun click(label: String, longClick: Boolean = false, alternative: String? = null,
+        inRoots: Boolean = false, documentItem: Boolean = false) {
         val deadline = SystemClock.uptimeMillis() + 15_000
         val action = if (longClick) AccessibilityNodeInfo.ACTION_LONG_CLICK else AccessibilityNodeInfo.ACTION_CLICK
         while (SystemClock.uptimeMillis() < deadline) {
-            val nodes = flatten(automation.rootInActiveWindow)
+            val nodes = flatten(if (inRoots) rootsList() else activeRoot())
             val matches = nodes.filter {
-                it.isEnabled && it.isVisibleToUser && (it.text?.toString().equals(label, ignoreCase = true) ||
+                it.isEnabled && it.isVisibleToUser && (!documentItem || generateSequence(it) { node -> node.parent }
+                    .any { node -> node.viewIdResourceName?.endsWith(":id/item_root") == true }) &&
+                    (it.text?.toString().equals(label, ignoreCase = true) ||
                     it.contentDescription?.toString().equals(label, ignoreCase = true) ||
                     (alternative != null && it.text?.toString().equals(alternative, ignoreCase = true)))
             }
@@ -119,6 +166,7 @@ internal class PickerRobot {
                 while (node != null) {
                     if (node.actionList.any { it.id == action } && node.performAction(action)) {
                         SystemClock.sleep(500)
+                        try { automation.waitForIdle(300, 5_000) } catch (_: java.util.concurrent.TimeoutException) { }
                         return
                     }
                     node = node.parent
@@ -126,7 +174,7 @@ internal class PickerRobot {
             }
             SystemClock.sleep(150)
         }
-        error("Picker control '$label' missing: ${flatten(automation.rootInActiveWindow).mapNotNull { it.text ?: it.contentDescription }}")
+        error("Picker control '$label' missing: ${flatten(activeRoot()).mapNotNull { it.text ?: it.contentDescription }}")
     }
 
     fun assertReadOnlyGrants(count: Int) {
