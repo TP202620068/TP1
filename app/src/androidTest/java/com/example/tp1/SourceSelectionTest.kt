@@ -328,6 +328,108 @@ class SourceSelectionTest {
     }
 
     @Test
+    fun overlappingTreesRemainIndependentAndUnrelatedRemovalPreservesCurrentFolder() {
+        robot.createFile("Dentro.txt", directory = "Hija")
+        openSelection()
+        compose.onNodeWithText("Elegir carpeta").performClick()
+        robot.pickFolder()
+        compose.awaitSources()
+        compose.onNodeWithText("Elegir carpeta").performClick()
+        robot.pickFolder("Hija")
+        compose.awaitSources()
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val records = SourceStore(context).restore().sources.map { it.record }
+        val parent = records.single { it.name == robot.folderName }
+        val child = records.single { it.name == "Hija" }
+        robot.assertReadOnlyGrants(2)
+        capture("overlapping-trees")
+        compose.onNodeWithText("Listo").performScrollTo().performClick()
+        lateinit var browser: BrowserViewModel
+        compose.runOnIdle { browser = ViewModelProvider(compose.activity)[BrowserViewModel::class.java] }
+        compose.waitUntil(10_000) { browser.state.value.entries.size == 2 }
+        compose.onNodeWithText("Hija").performClick()
+        compose.waitUntil(10_000) { !browser.state.value.loading && browser.state.value.entries.size == 1 }
+        val path = browser.state.value.path
+
+        // Removing the parent selection must not revoke the independently retained child tree.
+        openSelection()
+        compose.onNodeWithContentDescription("Quitar ${robot.folderName}").performScrollTo().performClick()
+        compose.awaitSources()
+        assertEquals(listOf(child), SourceStore(context).restore().sources.map { it.record })
+        assertEquals(setOf(child.uri), context.contentResolver.persistedUriPermissions.map { it.uri.toString() }.toSet())
+        compose.onNodeWithText("Listo").performScrollTo().performClick()
+        assertEquals(path, browser.state.value.path)
+        val file = browser.state.value.entries.single()
+        context.contentResolver.openInputStream(file.uri.toUri())!!.use { assertEquals('T'.code, it.read()) }
+        compose.onNodeWithText("Dentro.txt").assertIsDisplayed()
+        capture("child-after-parent-removal")
+        compose.activityRule.scenario.recreate()
+        compose.awaitSources()
+        compose.runOnIdle { browser = ViewModelProvider(compose.activity)[BrowserViewModel::class.java] }
+        compose.waitUntil(10_000) { !browser.state.value.loading && browser.state.value.entries.size == 1 }
+        assertEquals(path, browser.state.value.path)
+
+        openSelection()
+        compose.onNodeWithText("Elegir carpeta").performScrollTo().performClick()
+        robot.pickFolder()
+        compose.awaitSources()
+        compose.onNodeWithText("Quitar de la lista no borra los originales.").performScrollTo()
+        compose.onNodeWithContentDescription("Quitar Hija").performScrollTo().performClick()
+        compose.awaitSources()
+        assertEquals(setOf(parent.uri), context.contentResolver.persistedUriPermissions.map { it.uri.toString() }.toSet())
+        compose.onNodeWithText("Listo").performScrollTo().performClick()
+        compose.waitUntil(10_000) { browser.state.value.atRoots && browser.state.value.entries.size == 1 }
+        compose.onNodeWithText(robot.folderName).performClick()
+        compose.waitUntil(10_000) { !browser.state.value.loading && browser.state.value.entries.size == 1 }
+        compose.onNodeWithText("Hija").performClick()
+        compose.waitUntil(10_000) { !browser.state.value.loading && browser.state.value.path.size == 2 }
+        context.contentResolver.openInputStream(browser.state.value.entries.single().uri.toUri())!!.use {
+            assertEquals('T'.code, it.read())
+        }
+        capture("parent-after-child-removal")
+    }
+
+    @Test
+    fun failedRemovalAndUnknownRecordsKeepRetainedReadGrant() {
+        val uri = fixtureCall("fixture-authorize", "file").getString("uri")!!
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val file = java.io.File(context.cacheDir, "removal-durability.json").apply { delete() }
+        val pending = java.io.File(file.path + ".new")
+        try {
+            val store = SourceStore(context, file)
+            store.restore()
+            val selected = store.add(emptyList(), listOf(uri), SourceKind.Document,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION).sources
+            val saved = file.readText()
+            // A nonempty directory blocks AtomicFile's next write without damaging the saved file.
+            check(pending.mkdir())
+            java.io.File(pending, "blocker").writeText("keep")
+            assertThrows(Exception::class.java) { store.remove(selected, uri) }
+            assertEquals(saved, file.readText())
+            robot.assertReadOnlyGrants(1)
+            assertTrue(SourceStore(context, file).restore().sources.single().available)
+            pending.deleteRecursively()
+
+            val records = org.json.JSONArray(saved).put(org.json.JSONObject().put("uri", uri).put("kind", "Future"))
+            file.writeText(records.toString())
+            val restored = store.restore()
+            assertTrue(restored.damagedRecords)
+            assertTrue(store.remove(restored.sources, uri).isEmpty())
+            robot.assertReadOnlyGrants(1)
+            assertEquals("Future", org.json.JSONArray(file.readText()).getJSONObject(0).getString("kind"))
+            context.contentResolver.openInputStream(uri.toUri())!!.use { assertEquals('T'.code, it.read()) }
+
+            file.writeText(saved)
+            assertTrue(store.remove(store.restore().sources, uri).isEmpty())
+            robot.assertReadOnlyGrants(0)
+            assertTrue(SourceStore(context, file).restore().sources.isEmpty())
+        } finally {
+            pending.deleteRecursively()
+            file.delete()
+        }
+    }
+
+    @Test
     fun temporaryProviderFailureKeepsGrantAndSelectionAndRetryRecoversWithoutReselection() {
         val uri = fixtureCall("fixture-authorize", "file").getString("uri")!!
         lateinit var model: SourcesViewModel
