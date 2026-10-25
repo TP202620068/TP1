@@ -8,6 +8,10 @@ import org.json.JSONArray
 import org.junit.Assert.*
 import org.junit.Test
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
+import java.io.IOException
+import android.util.AtomicFile
 import com.example.tp1.sources.SelectedSource
 
 class SourceStoreTest {
@@ -90,5 +94,39 @@ class SourceStoreTest {
             assertTrue(store.remove(restored.sources, record.uri).isEmpty())
             assertTrue(store.restore().sources.isEmpty())
         } finally { file.delete() }
+    }
+
+    @Test
+    fun committedRemovalWithFailedVerificationCannotResaveStaleSources() {
+        val file = File(context.cacheDir, "source-uncertain-write.json")
+        var failAfterCommit = false
+        var failRead = false
+        val storage = object : AtomicFile(file) {
+            override fun finishWrite(stream: FileOutputStream?) {
+                super.finishWrite(stream)
+                if (failAfterCommit) { failAfterCommit = false; failRead = true }
+            }
+
+            override fun openRead(): FileInputStream {
+                if (failRead) { failRead = false; throw IOException("Simulated post-commit verification failure") }
+                return super.openRead()
+            }
+        }
+        try {
+            val store = SourceStore(context, file, storage)
+            store.restore()
+            store.writeRecords(listOf(tree))
+            val stale = store.restore().sources
+            failAfterCommit = true
+            assertThrows(IOException::class.java) { store.remove(stale, tree.uri) }
+            assertEquals(0, JSONArray(file.readText()).length())
+            assertThrows(IllegalStateException::class.java) { store.writeRecords(stale.map { it.record }) }
+            assertThrows(IllegalStateException::class.java) { store.add(stale, listOf(tree.uri), SourceKind.Tree, 0) }
+            assertThrows(IllegalStateException::class.java) { store.remove(stale, tree.uri) }
+            assertTrue(store.restore().sources.isEmpty())
+            val next = tree.copy(uri = tree.uri + "-new")
+            store.writeRecords(listOf(next))
+            assertEquals(listOf(next), store.restore().sources.map { it.record })
+        } finally { storage.delete() }
     }
 }

@@ -24,7 +24,9 @@ internal class SourcesViewModel(application: Application, private val savedState
 
     init { refresh() }
 
-    fun refresh() = operation(refresh = true) {
+    fun refresh() = operation(refresh = true) { restoreSources() }
+
+    private suspend fun restoreSources() {
         val restored = withContext(Dispatchers.IO) { store.restore() }
         publish(state.value.copy(
             restoring = false,
@@ -70,13 +72,14 @@ internal class SourcesViewModel(application: Application, private val savedState
         mutex.withLock {
             mutableState.value = state.value.copy(busy = true)
             try {
+                if (!refresh && !state.value.storageReady) restoreSources()
                 block()
             } catch (error: kotlinx.coroutines.CancellationException) {
                 throw error
             } catch (_: Exception) {
                 publish(state.value.copy(
                     restoring = false,
-                    storageReady = state.value.storageReady && !refresh,
+                    storageReady = false,
                     message = if (refresh) R.string.source_restore_error else R.string.source_storage_error
                 ))
             } finally {

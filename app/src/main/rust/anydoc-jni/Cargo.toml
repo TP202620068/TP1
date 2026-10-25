@@ -1,0 +1,17 @@
+[package]
+name = "tp1_anydoc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+anydoc = "=0.2.4"
+jni = "=0.22.4"
+
+[profile.release]
+lto = "thin"
+panic = "unwind"

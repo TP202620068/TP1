@@ -13,11 +13,17 @@ import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourceMetadata
 import java.io.FileNotFoundException
 import java.io.IOException
+import java.io.Closeable
+import java.io.InputStream
 import java.util.Locale
 
 internal data class DirectoryListing(val entries: List<BrowserEntry>, val pending: Boolean)
 
-/** Only immediate children and metadata. Call on Dispatchers.IO. */
+internal class AuthorizedDocument(val metadata: SourceMetadata, val stream: InputStream) : Closeable {
+    override fun close() = stream.close()
+}
+
+/** Source-authorized provider access. Call on Dispatchers.IO. */
 internal class DocumentBrowser(private val resolver: ContentResolver) {
     fun root(source: SelectedSource): BrowserEntry {
         val uri = source.record.uri.toUri()
@@ -72,6 +78,16 @@ internal class DocumentBrowser(private val resolver: ContentResolver) {
             clipData = ClipData.newRawUri(details.name, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
+    }
+
+    fun openRead(source: SelectedSource, entry: BrowserEntry): AuthorizedDocument {
+        requireRead(source)
+        if (entry.sourceUri != source.record.uri || entry.directory) throw SecurityException("Invalid document selection")
+        val uri = authorizedDocument(source, entry.uri)
+        val details = metadata(uri.toString(), entry.metadata.name)
+        if (details.mimeType == Document.MIME_TYPE_DIR) throw FileNotFoundException("Cannot extract a directory")
+        val stream = resolver.openInputStream(uri) ?: throw FileNotFoundException("Document unavailable")
+        return AuthorizedDocument(details, stream)
     }
 
     private fun requireRead(source: SelectedSource) {

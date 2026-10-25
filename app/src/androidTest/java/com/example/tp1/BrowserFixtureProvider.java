@@ -25,6 +25,11 @@ import java.util.List;
 public class BrowserFixtureProvider extends DocumentsProvider {
     private final List<String> visited = Collections.synchronizedList(new ArrayList<>());
     private volatile boolean fileUnavailable;
+    private volatile byte[] extractionBytes = "name,value\nTP1,fixture\n".getBytes(StandardCharsets.UTF_8);
+    private volatile String extractionName = "fixture.csv";
+    private volatile String extractionMime = "text/csv";
+    private volatile long extractionSize = -1;
+    private volatile boolean extractionSlow;
     private static final List<String> CHILDREN = Arrays.asList("slow", "error", "null", "missing-id", "pending", "gone", "file", "sibling", "unviewable");
     @Override public boolean onCreate() { return true; }
 
@@ -35,6 +40,12 @@ public class BrowserFixtureProvider extends DocumentsProvider {
     }
 
     @Override public Cursor queryDocument(String id, String[] projection) {
+        if (id.equals("extract")) {
+            MatrixCursor cursor = new MatrixCursor(new String[] {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
+                Document.COLUMN_MIME_TYPE, Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED});
+            cursor.addRow(new Object[] {id, extractionName, extractionMime, extractionSize < 0 ? null : extractionSize, 1L});
+            return cursor;
+        }
         if (fileUnavailable && id.equals("file")) throw new IllegalStateException("Temporary fixture provider failure");
         return rows(id.equals("gone") ? Collections.emptyList() : Collections.singletonList(id));
     }
@@ -71,6 +82,26 @@ public class BrowserFixtureProvider extends DocumentsProvider {
     }
 
     @Override public ParcelFileDescriptor openDocument(String id, String mode, CancellationSignal signal) throws FileNotFoundException {
+        if (id.equals("extract") && mode.equals("r")) {
+            byte[] bytes = extractionBytes;
+            if (extractionSlow) {
+                return openPipeHelper(DocumentsContract.buildDocumentUri("com.example.tp1.test.documents", id),
+                    extractionMime, null, bytes, (descriptor, uri, mime, options, data) -> {
+                        try (FileOutputStream output = new FileOutputStream(descriptor.getFileDescriptor())) {
+                            for (int offset = 0; offset < data.length; offset += 4096) {
+                                output.write(data, offset, Math.min(4096, data.length - offset));
+                                SystemClock.sleep(20);
+                            }
+                        } catch (IOException ignored) {
+                            // The reader closes the pipe when an extraction is cancelled or exceeds its limit.
+                        }
+                    });
+            }
+            File file = new File(getContext().getCacheDir(), "extraction-proof");
+            try (FileOutputStream output = new FileOutputStream(file)) { output.write(bytes); }
+            catch (IOException error) { throw new FileNotFoundException(error.toString()); }
+            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+        }
         if (!mode.equals("r") || !(id.equals("file") || id.equals("sibling") || id.equals("unviewable"))) throw new FileNotFoundException();
         File file = new File(getContext().getCacheDir(), "viewer-proof.txt");
         try (FileOutputStream output = new FileOutputStream(file)) {
@@ -81,6 +112,23 @@ public class BrowserFixtureProvider extends DocumentsProvider {
 
     @Override public Bundle call(String method, String arg, Bundle extras) {
         Bundle result = new Bundle();
+        if (method.equals("fixture-extraction")) {
+            extractionBytes = extras.getByteArray("bytes");
+            extractionName = extras.getString("name", "fixture.csv");
+            extractionMime = extras.getString("mime", "text/csv");
+            extractionSize = extras.getLong("size", -1);
+            extractionSlow = extras.getBoolean("slow", false);
+            android.net.Uri uri = DocumentsContract.buildDocumentUri("com.example.tp1.test.documents", "extract");
+            getContext().grantUriPermission("com.example.tp1", uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            result.putString("uri", uri.toString());
+            return result;
+        }
+        if (method.equals("fixture-extraction-revoke")) {
+            getContext().revokeUriPermission(DocumentsContract.buildDocumentUri("com.example.tp1.test.documents", "extract"),
+                Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            return result;
+        }
         if (method.equals("fixture-authorize")) {
             boolean file = "file".equals(arg);
             android.net.Uri uri = file ? DocumentsContract.buildDocumentUri("com.example.tp1.test.documents", "file") :

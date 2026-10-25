@@ -12,6 +12,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
 import androidx.core.net.toUri
+import com.example.tp1.extraction.ExtractionArtifacts
 
 internal data class SourceLoad(val sources: List<SelectedSource>, val damagedRecords: Boolean)
 internal data class SourceUpdate(val sources: List<SelectedSource>, val rejected: Boolean)
@@ -19,17 +20,25 @@ internal data class SourceUpdate(val sources: List<SelectedSource>, val rejected
 /** One caller serializes operations, all on Dispatchers.IO. No document contents are read. */
 internal class SourceStore(
     private val context: Context,
-    file: File = File(context.filesDir, "sources.json")
+    file: File = File(context.filesDir, "sources.json"),
+    private val storage: AtomicFile = AtomicFile(file)
 ) {
     private val resolver = context.contentResolver
-    private val storage = AtomicFile(file)
+    private val managesArtifacts = file == File(context.filesDir, "sources.json")
     private var readable = false
     private var unknownRecords = emptyList<Any>()
 
     fun restore(): SourceLoad {
-        val records = readRecords()
+        val records = synchronized(ExtractionArtifacts.sourceLock) {
+            readRecords().also { records ->
+                // Unknown records may belong to a future schema; do not prune their artifacts.
+                if (managesArtifacts && unknownRecords.isEmpty()) ExtractionArtifacts.reconcile(context, records.map { it.uri }.toSet())
+            }
+        }
         val grants = retainedReads()
-        return SourceLoad(records.map { inspect(it, grants) }, unknownRecords.isNotEmpty())
+        val result = SourceLoad(records.map { inspect(it, grants) }, unknownRecords.isNotEmpty())
+        readable = true
+        return result
     }
 
     private fun readRecords(): List<SourceRecord> {
@@ -60,11 +69,14 @@ internal class SourceStore(
             }
         }
         unknownRecords = unknown
-        readable = true
         return records.deduplicated()
     }
 
-    internal fun writeRecords(records: List<SourceRecord>) {
+    internal fun containsRecord(record: SourceRecord): Boolean = synchronized(ExtractionArtifacts.sourceLock) {
+        readRecords().any { it.uri == record.uri && it.kind == record.kind }
+    }
+
+    internal fun writeRecords(records: List<SourceRecord>) = synchronized(ExtractionArtifacts.sourceLock) {
         check(readable) { "Restore must succeed before writing" }
         val array = JSONArray()
         records.deduplicated().forEach { record ->
@@ -74,6 +86,8 @@ internal class SourceStore(
         }
         unknownRecords.forEach(array::put)
         val bytes = array.toString().toByteArray(Charsets.UTF_8)
+        // Until verification succeeds, callers must restore disk state before another mutation.
+        readable = false
         val stream = storage.startWrite()
         try {
             stream.write(bytes)
@@ -86,6 +100,7 @@ internal class SourceStore(
         if (!storage.openRead().use { it.readBytes() }.contentEquals(bytes)) {
             throw IOException("Source records were not saved")
         }
+        readable = true
     }
 
     fun add(
@@ -94,6 +109,7 @@ internal class SourceStore(
         kind: SourceKind,
         offeredFlags: Int
     ): SourceUpdate {
+        check(readable) { "Restore must succeed before changing sources" }
         val previousGrants = retainedReads()
         val acquired = mutableSetOf<String>()
         val next = existing.toMutableList()
@@ -131,11 +147,26 @@ internal class SourceStore(
         return SourceUpdate(next, rejected)
     }
 
-    fun remove(existing: List<SelectedSource>, uri: String): List<SelectedSource> {
+    fun remove(existing: List<SelectedSource>, uri: String): List<SelectedSource> = synchronized(ExtractionArtifacts.sourceLock) {
+        check(readable) { "Restore must succeed before changing sources" }
         val next = existing.filterNot { it.record.uri == uri }
-        writeRecords(next.map { it.record })
+        try {
+            writeRecords(next.map { it.record })
+            if (managesArtifacts) ExtractionArtifacts.removed(context, uri)
+        } catch (error: Exception) {
+            // Verification may fail after committing. Retire disk artifacts even if unknown records prevent reconciliation.
+            readable = false
+            if (managesArtifacts) {
+                try {
+                    ExtractionArtifacts.removed(context, uri)
+                } catch (cleanup: Exception) {
+                    error.addSuppressed(cleanup)
+                }
+            }
+            throw error
+        }
         if (next.none { it.record.uri == uri }) releaseRead(uri)
-        return next
+        next
     }
 
     private fun releaseRead(text: String) {
