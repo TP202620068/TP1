@@ -26,4 +26,51 @@
     public java.io.File operations(android.content.Context);
     public com.example.tp1.extraction.ExtractionArtifact current(android.content.Context, com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry);
     public void removed(android.content.Context, java.lang.String, kotlin.jvm.functions.Function1);
+    public kotlinx.coroutines.sync.Mutex getPermit();
+}
+
+# Separate test APK roots. Native registration has its own production rules.
+-keep @interface com.example.tp1.inference.ManualInference
+-keepattributes RuntimeVisibleAnnotations,AnnotationDefault
+-keep,allowoptimization class com.example.tp1.inference.LlamaEngine {
+    public <init>(android.content.Context);
+    public int getPhase();
+    public boolean getTestPaused();
+    public java.lang.Object load(kotlin.coroutines.Continuation);
+    public kotlinx.coroutines.flow.Flow generate(java.lang.String, java.lang.String, int, int, long);
+    public static kotlinx.coroutines.flow.Flow generate$default(com.example.tp1.inference.LlamaEngine, java.lang.String, java.lang.String, int, int, long, int, java.lang.Object);
+    public java.lang.Object formatPrompt(java.lang.String, java.lang.String, kotlin.coroutines.Continuation);
+    public java.lang.Object tokenCount(java.lang.String, java.lang.String, kotlin.coroutines.Continuation);
+    public void cancel();
+    public void testControl(int, boolean, boolean);
+    public static void testControl$default(com.example.tp1.inference.LlamaEngine, int, boolean, boolean, int, java.lang.Object);
+    public java.lang.Object reset(kotlin.coroutines.Continuation);
+    public java.lang.Object unload(kotlin.coroutines.Continuation);
+    public kotlinx.coroutines.Deferred closeAsync();
+}
+-keep,allowoptimization class com.example.tp1.inference.ModelFile {
+    public static com.example.tp1.inference.ModelFile INSTANCE;
+    public java.io.File location(android.content.Context);
+    public java.io.File provision(android.content.Context, java.io.InputStream);
+}
+-keep,allowoptimization interface com.example.tp1.inference.GenerationEvent
+-keep,allowoptimization class com.example.tp1.inference.GenerationEvent$Started {
+    public int getInputTokens();
+    public int getBosCount();
+    public int getContextTokens();
+    public int getBatchTokens();
+    public int getMicroBatchTokens();
+    public int getThreads();
+}
+-keep,allowoptimization class com.example.tp1.inference.GenerationEvent$Text {
+    public java.lang.String getValue();
+}
+-keep,allowoptimization class com.example.tp1.inference.GenerationEvent$Finished {
+    public com.example.tp1.inference.FinishReason getReason();
+    public int getGeneratedTokens();
+    public int getIncompleteUtf8Bytes();
+    public java.lang.String getDetail();
+}
+-keep,allowoptimization enum com.example.tp1.inference.FinishReason {
+    public static com.example.tp1.inference.FinishReason *;
 }

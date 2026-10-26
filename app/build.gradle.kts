@@ -6,10 +6,12 @@ import org.gradle.api.file.DirectoryProperty
 import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
+import org.gradle.api.tasks.InputDirectory
 import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
+import org.gradle.api.file.FileSystemOperations
 
 plugins {
     alias(libs.plugins.android.application)
@@ -82,15 +84,27 @@ android {
         applicationId = "com.example.tp1"
         minSdk = 33
         ndk { abiFilters += nativeAbis }
+        externalNativeBuild {
+            cmake {
+                arguments += "-DANDROID_STL=c++_shared"
+                targets += "tp1_llama"
+            }
+        }
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // Model/setup suites require explicit selection and an override of this exclusion.
+        testInstrumentationRunnerArguments["notAnnotation"] = "com.example.tp1.inference.ManualInference"
     }
 
     buildTypes {
+        debug {
+            externalNativeBuild { cmake { arguments += "-DTP1_LLAMA_TEST_HOOKS=ON" } }
+        }
         release {
+            externalNativeBuild { cmake { arguments += "-DTP1_LLAMA_TEST_HOOKS=${if (releaseInstrumentation) "ON" else "OFF"}" } }
             if (releaseInstrumentation) {
                 signingConfig = signingConfigs.getByName("debug")
                 proguardFile("release-instrumentation-rules.pro")
@@ -100,8 +114,8 @@ android {
             optimization {
                 enable = true
                 // The separate test APK calls shared runtime APIs that app-only shrinking can remove.
-                packageScope = if (releaseInstrumentation) setOf("com.example.tp1.extraction.**")
-                    else setOf("androidx.**", "kotlin.**", "kotlinx.**", "com.example.tp1.extraction.**")
+                packageScope = if (releaseInstrumentation) setOf("com.example.tp1.extraction.**", "com.example.tp1.inference.**")
+                    else setOf("androidx.**", "kotlin.**", "kotlinx.**", "com.example.tp1.extraction.**", "com.example.tp1.inference.**")
             }
         }
     }
@@ -116,11 +130,50 @@ android {
         animationsDisabled = true
     }
     testBuildType = if (releaseInstrumentation) "release" else "debug"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.31.6"
+        }
+    }
+}
+
+/** Ship source/runtime notices without copying or modifying dependency sources. */
+abstract class LlamaNoticesTask @Inject constructor(private val files: FileSystemOperations) : DefaultTask() {
+    @get:InputDirectory abstract val llamaDirectory: DirectoryProperty
+    @get:InputDirectory abstract val kleidiaiDirectory: DirectoryProperty
+    @get:Internal abstract val ndkDirectory: DirectoryProperty
+    @get:OutputDirectory abstract val outputDirectory: DirectoryProperty
+
+    init { outputs.upToDateWhen { false } }
+
+    @TaskAction fun stage() {
+        val llama = llamaDirectory.get().asFile
+        val kleidiai = kleidiaiDirectory.get().asFile
+        val runtimeNotice = ndkDirectory.get().asFile.resolve("NOTICE.toolchain")
+        for (required in listOf(llama.resolve("LICENSE"),
+                kleidiai.resolve("LICENSES/Apache-2.0.txt"), kleidiai.resolve("LICENSES/BSD-3-Clause.txt"), runtimeNotice)) {
+            if (!required.isFile) throw GradleException("Missing native dependency notice: $required")
+        }
+        files.sync {
+            into(outputDirectory)
+            into("native-notices/llama.cpp") { from(llama) { include("LICENSE", "vendor/**/LICENSE*", "vendor/**/COPYING*") } }
+            into("native-notices/kleidiai") { from(kleidiai.resolve("LICENSES")) }
+            into("native-notices/ndk") { from(runtimeNotice) }
+        }
+    }
 }
 
 val nativeApi = requireNotNull(android.defaultConfig.minSdk)
 val selectedNdk = androidComponents.sdkComponents.ndkDirectory
 androidComponents.onVariants { variant ->
+    val notices = tasks.register<LlamaNoticesTask>("stageLlamaNotices${variant.name.replaceFirstChar { it.uppercaseChar() }}") {
+        llamaDirectory.set(rootProject.layout.projectDirectory.dir("third_party/llama.cpp"))
+        kleidiaiDirectory.set(rootProject.layout.projectDirectory.dir("third_party/kleidiai"))
+        ndkDirectory.set(selectedNdk)
+        outputDirectory.set(layout.buildDirectory.dir("generated/llama-notices/${variant.name}/assets"))
+    }
+    requireNotNull(variant.sources.assets).addGeneratedSourceDirectory(notices, LlamaNoticesTask::outputDirectory)
     val producer = tasks.register<CargoNdkTask>("buildAnyDoc${variant.name.replaceFirstChar { it.uppercaseChar() }}") {
         crateDirectory.set(layout.projectDirectory.dir("src/main/rust/anydoc-jni"))
         ndkDirectory.set(selectedNdk)

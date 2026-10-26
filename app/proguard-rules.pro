@@ -5,3 +5,8 @@
 -keep class com.example.tp1.extraction.NativeConversion {
     public <init>(java.lang.String, java.lang.String, java.lang.String, long[], long);
 }
+
+# RegisterNatives finds this exact class and its private instance native methods.
+-keep,allowoptimization class com.example.tp1.inference.LlamaEngine {
+    private native <methods>;
+}

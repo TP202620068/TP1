@@ -25,6 +25,7 @@ import kotlinx.coroutines.sync.Mutex
 /** Process-wide ownership, shared with source removal. No native code runs under sourceLock. */
 internal object ExtractionArtifacts {
     val sourceLock = Any()
+    // Inference holds this same permit for the full loaded-model lifetime, including idle periods.
     val permit = Mutex()
     private var initialized = false
     private var nextRequest = 0L

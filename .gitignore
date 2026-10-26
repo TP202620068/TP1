@@ -14,4 +14,7 @@
 .cxx
 local.properties
 .agents/
-docs/
+/docs/*
+/third_party/llama.cpp/
+/third_party/kleidiai/
+*.gguf
