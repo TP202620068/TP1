@@ -13,6 +13,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.example.tp1.browser.BrowserViewModel
+import com.example.tp1.chat.ChatViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
 import com.example.tp1.sources.sourcePickerIntent
@@ -23,6 +24,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val sources: SourcesViewModel by viewModels()
     private val browser: BrowserViewModel by viewModels()
+    private val chat: ChatViewModel by viewModels()
     private val documents = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         receiveSources(it, SourceKind.Document)
     }
@@ -39,7 +41,7 @@ class MainActivity : ComponentActivity() {
         window.isNavigationBarContrastEnforced = false
         setContent {
             TP1Theme {
-                SourceFlow(sources, browser, onPick = { kind ->
+                SourceFlow(sources, browser, chat, onPick = { kind ->
                     try {
                         (if (kind == SourceKind.Tree) tree else documents).launch(sourcePickerIntent(kind))
                     } catch (_: ActivityNotFoundException) {
@@ -54,6 +56,16 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (!sources.state.value.restoring) refreshBrowser()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        chat.setForeground(true)
+    }
+
+    override fun onStop() {
+        if (!isChangingConfigurations) chat.setForeground(false)
+        super.onStop()
     }
 
     private fun refreshBrowser() = lifecycleScope.launch {

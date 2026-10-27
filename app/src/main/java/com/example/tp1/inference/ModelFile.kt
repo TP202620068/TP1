@@ -18,7 +18,7 @@ import java.security.MessageDigest
 
 internal class ModelIntegrityException(message: String) : IOException(message)
 
-/** Shared verification and no-replacement publication. Callers own input streams and cancellation. */
+/** Shared verified publication. Valid cached inodes are retained; corrupt ones can be atomically replaced. */
 internal object ModelFile {
     fun verify(file: File, artifact: ModelArtifact, checkActive: () -> Unit) {
         FileInputStream(file).use { input ->
@@ -59,9 +59,15 @@ internal object ModelFile {
         FileChannel.open(File(directory, ".publish.lock").toPath(), CREATE, WRITE).use { channel ->
             channel.lock().use {
                 checkActive()
-                // ATOMIC_MOVE may replace a destination. Cooperating publishers must check under the lock.
-                if (Files.exists(destination.toPath(), NOFOLLOW_LINKS)) verify(destination, artifact, checkActive)
-                else Files.move(staged.toPath(), destination.toPath(), ATOMIC_MOVE)
+                // Recheck under the lock so a valid concurrent publisher's inode is never replaced.
+                val valid = Files.exists(destination.toPath(), NOFOLLOW_LINKS) && try {
+                    verify(destination, artifact, checkActive)
+                    true
+                } catch (_: ModelIntegrityException) { false }
+                if (!valid) {
+                    checkActive()
+                    Files.move(staged.toPath(), destination.toPath(), ATOMIC_MOVE)
+                }
                 FileChannel.open(directory.toPath(), READ).use { it.force(true) }
             }
         }

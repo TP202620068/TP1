@@ -73,14 +73,17 @@ internal class LlamaEngine(private val models: ModelManager) {
     }
 
     /** No chat history is retained. Recollection is a new explicit request. Concurrent work is rejected. */
-    fun generate(system: String, user: String, maxNewTokens: Int = 256, seed: Int = -1, deadlineMillis: Long = 120_000): Flow<GenerationEvent> = flow {
+    fun generate(system: String, user: String, maxNewTokens: Int = 256, seed: Int = -1, deadlineMillis: Long = 120_000): Flow<GenerationEvent> =
+        generate(system, listOf(ChatMessage(ChatRole.User, user)), maxNewTokens, seed, deadlineMillis)
+
+    fun generate(system: String, messages: List<ChatMessage>, maxNewTokens: Int = 256, seed: Int = -1, deadlineMillis: Long = 120_000): Flow<GenerationEvent> = flow {
         val current = Delivery()
         synchronized(lock) {
             check(closing == null && request == null && delivery == null) { "Engine closed or busy" }
             delivery = current
         }
         try {
-            stream(current, system, user, maxNewTokens, seed, deadlineMillis).collect { event ->
+            stream(current, system, messages, maxNewTokens, seed, deadlineMillis).collect { event ->
                 // Native work may finish before a slow collector. Stop also suppresses queued deltas.
                 if (!current.stopped.get()) emit(event)
                 else if (event is GenerationEvent.Finished) emit(event.copy(reason = FinishReason.CANCELLED))
@@ -88,20 +91,18 @@ internal class LlamaEngine(private val models: ModelManager) {
         } finally { synchronized(lock) { if (delivery === current) delivery = null } }
     }
 
-    private fun stream(current: Delivery, system: String, user: String, maxNewTokens: Int,
+    private fun stream(current: Delivery, system: String, messages: List<ChatMessage>, maxNewTokens: Int,
                        seed: Int, deadlineMillis: Long): Flow<GenerationEvent> = channelFlow {
         require(maxNewTokens in 1..512)
         require(deadlineMillis in 1..120_000)
-        val systemBytes = requestBytes(system)
-        val userBytes = requestBytes(user)
-        require(systemBytes.size + userBytes.size <= 64 * 1024) { "Request exceeds 64 KiB" }
+        val (systemBytes, roles, contents) = encodeMessages(system, messages)
         operation(current) { owner ->
             check(model != null) { "No verified model loaded" }
             fun sendEvent(event: GenerationEvent) {
                 if (!trySend(event).isSuccess) throw CancellationException("Generation collector stopped")
             }
             try {
-                val info = beginNative(owner, systemBytes, userBytes, maxNewTokens, seed, deadlineMillis)
+                val info = beginNative(owner, systemBytes, roles, contents, maxNewTokens, seed, deadlineMillis)
                 if (info[0] != 0) {
                     sendEvent(GenerationEvent.Finished(reason(info[0]), generatedNative(owner)))
                 } else {
@@ -134,18 +135,18 @@ internal class LlamaEngine(private val models: ModelManager) {
         }
     }.buffer(Channel.UNLIMITED)
 
-    suspend fun formatPrompt(system: String, user: String): String = operation { owner ->
-        val first = requestBytes(system)
-        val second = requestBytes(user)
-        require(first.size + second.size <= 64 * 1024)
-        String(formatNative(owner, first, second), Charsets.UTF_8)
+    suspend fun formatPrompt(system: String, user: String): String = formatPrompt(system, listOf(ChatMessage(ChatRole.User, user)))
+
+    suspend fun formatPrompt(system: String, messages: List<ChatMessage>): String = operation { owner ->
+        val (first, roles, contents) = encodeMessages(system, messages)
+        String(formatNative(owner, first, roles, contents), Charsets.UTF_8)
     }
 
-    suspend fun tokenCount(system: String, user: String): Int = operation { owner ->
-        val first = requestBytes(system)
-        val second = requestBytes(user)
-        require(first.size + second.size <= 64 * 1024)
-        tokenCountNative(owner, first, second)
+    suspend fun tokenCount(system: String, user: String): Int = tokenCount(system, listOf(ChatMessage(ChatRole.User, user)))
+
+    suspend fun tokenCount(system: String, messages: List<ChatMessage>): Int = operation { owner ->
+        val (first, roles, contents) = encodeMessages(system, messages)
+        tokenCountNative(owner, first, roles, contents)
     }
 
     fun cancel() = synchronized(lock) {
@@ -247,12 +248,15 @@ internal class LlamaEngine(private val models: ModelManager) {
         }
     }
 
-    private fun requestBytes(text: String): ByteArray {
-        require('\u0000' !in text) { "Chat messages cannot contain NUL" }
-        require(text.length <= 64 * 1024) { "Request exceeds byte limit" }
-        // Reject unpaired UTF-16 surrogates rather than silently replacing them.
-        val buffer = Charsets.UTF_8.newEncoder().encode(java.nio.CharBuffer.wrap(text))
-        return ByteArray(buffer.remaining()).also { buffer.get(it) }
+    private fun encodeMessages(system: String, messages: List<ChatMessage>): Triple<ByteArray, IntArray, Array<ByteArray>> {
+        require(messages.size in 1..1023 && messages.size % 2 == 1)
+        require(messages.withIndex().all { (index, message) ->
+            message.role == if (index % 2 == 0) ChatRole.User else ChatRole.Assistant
+        }) { "Invalid chat role order" }
+        val first = chatBytes(system)
+        val contents = messages.map { chatBytes(it.text) }.toTypedArray()
+        require(first.size.toLong() + contents.sumOf { it.size.toLong() } <= 64 * 1024) { "Request exceeds 64 KiB" }
+        return Triple(first, messages.map { it.role.ordinal }.toIntArray(), contents)
     }
 
     private fun reason(status: Int) = when (status) {
@@ -269,9 +273,9 @@ internal class LlamaEngine(private val models: ModelManager) {
                                     temperature: Float, topK: Int, repetitionPenalty: Float, repetitionWindow: Int,
                                     frequencyPenalty: Float, presencePenalty: Float, requireSingleLeadingBos: Boolean): Boolean
     private external fun unloadNative(owner: Long)
-    private external fun formatNative(owner: Long, system: ByteArray, user: ByteArray): ByteArray
-    private external fun tokenCountNative(owner: Long, system: ByteArray, user: ByteArray): Int
-    private external fun beginNative(owner: Long, system: ByteArray, user: ByteArray, maxTokens: Int, seed: Int, deadlineMillis: Long): IntArray
+    private external fun formatNative(owner: Long, system: ByteArray, roles: IntArray, contents: Array<ByteArray>): ByteArray
+    private external fun tokenCountNative(owner: Long, system: ByteArray, roles: IntArray, contents: Array<ByteArray>): Int
+    private external fun beginNative(owner: Long, system: ByteArray, roles: IntArray, contents: Array<ByteArray>, maxTokens: Int, seed: Int, deadlineMillis: Long): IntArray
     private external fun stepNative(owner: Long): ByteArray
     private external fun resetNative(owner: Long)
     private external fun cancelNative(owner: Long)

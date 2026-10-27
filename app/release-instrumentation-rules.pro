@@ -42,7 +42,9 @@
     public kotlinx.coroutines.flow.Flow generate(java.lang.String, java.lang.String, int, int, long);
     public static kotlinx.coroutines.flow.Flow generate$default(com.example.tp1.inference.LlamaEngine, java.lang.String, java.lang.String, int, int, long, int, java.lang.Object);
     public java.lang.Object formatPrompt(java.lang.String, java.lang.String, kotlin.coroutines.Continuation);
+    public java.lang.Object formatPrompt(java.lang.String, java.util.List, kotlin.coroutines.Continuation);
     public java.lang.Object tokenCount(java.lang.String, java.lang.String, kotlin.coroutines.Continuation);
+    public java.lang.Object tokenCount(java.lang.String, java.util.List, kotlin.coroutines.Continuation);
     public void cancel();
     public void testControl(int, boolean, boolean);
     public static void testControl$default(com.example.tp1.inference.LlamaEngine, int, boolean, boolean, int, java.lang.Object);
@@ -85,12 +87,18 @@
     public static com.example.tp1.inference.InferenceSession$Companion Companion;
     public com.example.tp1.inference.Model getModel();
     public java.lang.Object infer(java.lang.String, kotlin.coroutines.Continuation);
+    public java.lang.Object prepare(java.lang.String, java.util.List, kotlin.coroutines.Continuation);
+    public static java.lang.Object prepare$default(com.example.tp1.inference.InferenceSession, java.lang.String, java.util.List, kotlin.coroutines.Continuation, int, java.lang.Object);
+    public kotlinx.coroutines.flow.Flow stream(java.util.List);
     public void cancel();
+    public kotlinx.coroutines.Deferred closeAsync();
     public java.lang.Object close(kotlin.coroutines.Continuation);
 }
 -keep,allowoptimization class com.example.tp1.inference.InferenceSession$Companion {
-    public java.lang.Object open(com.example.tp1.inference.ModelManager, com.example.tp1.inference.Model, kotlin.coroutines.Continuation);
-    public java.lang.Object open$app(com.example.tp1.inference.Model, com.example.tp1.inference.LlamaEngine, kotlin.coroutines.Continuation);
+    public java.lang.Object open(com.example.tp1.inference.ModelManager, com.example.tp1.inference.Model, java.lang.String, kotlin.coroutines.Continuation);
+    public static java.lang.Object open$default(com.example.tp1.inference.InferenceSession$Companion, com.example.tp1.inference.ModelManager, com.example.tp1.inference.Model, java.lang.String, kotlin.coroutines.Continuation, int, java.lang.Object);
+    public java.lang.Object open$app(com.example.tp1.inference.Model, com.example.tp1.inference.LlamaEngine, java.lang.String, kotlin.coroutines.Continuation);
+    public static java.lang.Object open$app$default(com.example.tp1.inference.InferenceSession$Companion, com.example.tp1.inference.Model, com.example.tp1.inference.LlamaEngine, java.lang.String, kotlin.coroutines.Continuation, int, java.lang.Object);
 }
 -keep,allowoptimization class com.example.tp1.inference.InferenceResponse {
     public java.lang.String getText();
@@ -109,9 +117,11 @@
     public int getThreads();
 }
 -keep,allowoptimization class com.example.tp1.inference.GenerationEvent$Text {
+    public <init>(java.lang.String);
     public java.lang.String getValue();
 }
 -keep,allowoptimization class com.example.tp1.inference.GenerationEvent$Finished {
+    public <init>(...);
     public com.example.tp1.inference.FinishReason getReason();
     public int getGeneratedTokens();
     public int getIncompleteUtf8Bytes();
@@ -120,3 +130,51 @@
 -keep,allowoptimization enum com.example.tp1.inference.FinishReason {
     public static com.example.tp1.inference.FinishReason *;
 }
+
+-keep,allowoptimization class com.example.tp1.inference.ChatMessage {
+    public <init>(com.example.tp1.inference.ChatRole, java.lang.String);
+    public java.lang.String getText();
+    public boolean equals(java.lang.Object);
+}
+-keep,allowoptimization enum com.example.tp1.inference.ChatRole {
+    public static com.example.tp1.inference.ChatRole User;
+    public static com.example.tp1.inference.ChatRole Assistant;
+}
+-keep,allowoptimization class com.example.tp1.inference.ChatMessageKt {
+    public static java.lang.Object budgetChatMessages(java.lang.String, java.util.List, java.lang.String, kotlin.jvm.functions.Function2, kotlin.coroutines.Continuation);
+}
+-keep,allowoptimization class com.example.tp1.chat.ChatViewModel {
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1);
+    public kotlinx.coroutines.flow.StateFlow getState();
+    public void editDraft(java.lang.String);
+    public void setSelected(boolean);
+    public void setForeground(boolean);
+    public void prepare();
+    public void send();
+    public void stop();
+    public void retry();
+}
+-keep,allowoptimization class com.example.tp1.chat.ChatConnection {
+    public <init>(kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0);
+}
+-keep,allowoptimization class com.example.tp1.chat.ChatState {
+    # The separately compiled Compose test reads the compiler-generated stability field.
+    public static final int $stable;
+    public java.lang.String getDraft();
+    public java.util.List getTurns();
+    public com.example.tp1.chat.ChatPreparation getPreparation();
+    public com.example.tp1.chat.ChatPhase getPhase();
+    public com.example.tp1.chat.ChatProblem getProblem();
+}
+-keep,allowoptimization class com.example.tp1.chat.ChatTurn {
+    public java.lang.String getAnswer();
+    public boolean getRunning();
+    public boolean getFailed();
+    public com.example.tp1.inference.FinishReason getFinish();
+}
+-keep,allowoptimization class com.example.tp1.chat.ChatStateKt {
+    public static java.util.List replayMessages(java.util.List);
+}
+-keep,allowoptimization enum com.example.tp1.chat.ChatPreparation { public static com.example.tp1.chat.ChatPreparation *; }
+-keep,allowoptimization enum com.example.tp1.chat.ChatPhase { public static com.example.tp1.chat.ChatPhase *; }
+-keep,allowoptimization enum com.example.tp1.chat.ChatProblem { public static com.example.tp1.chat.ChatProblem *; }

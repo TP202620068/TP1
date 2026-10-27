@@ -10,3 +10,8 @@
 -keep,allowoptimization class com.example.tp1.inference.LlamaEngine {
     private native <methods>;
 }
+
+# SavedStateViewModelFactory invokes this constructor reflectively.
+-keepclassmembers,allowoptimization class com.example.tp1.chat.ChatViewModel {
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle);
+}

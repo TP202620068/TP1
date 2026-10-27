@@ -26,6 +26,7 @@ constexpr size_t text_limit = 64 * 1024;
 constexpr size_t output_limit = 1024 * 1024;
 constexpr int eog = 1, length = 2, cancelled = 3, deadline = 4;
 struct PendingException {};
+struct PromptTooLarge : std::invalid_argument { using std::invalid_argument::invalid_argument; };
 
 void check_java(JNIEnv * env) { if (env->ExceptionCheck()) throw PendingException{}; }
 
@@ -167,18 +168,46 @@ bool abort_decode(void * data) {
     return value.stopped() != 0;
 }
 
-std::string format(Owner & value, const std::string & system, const std::string & user) {
+std::vector<std::string> chat_contents(JNIEnv * env, jintArray roles, jobjectArray contents, size_t system_bytes) {
+    if (roles == nullptr || contents == nullptr) throw std::invalid_argument("Missing chat messages");
+    const auto count = env->GetArrayLength(contents);
+    check_java(env);
+    if (count < 1 || count > 1023 || count % 2 != 1 || env->GetArrayLength(roles) != count) {
+        throw std::invalid_argument("Invalid chat message count");
+    }
+    check_java(env);
+    std::vector<jint> ids(static_cast<size_t>(count));
+    env->GetIntArrayRegion(roles, 0, count, ids.data());
+    check_java(env);
+    std::vector<std::string> result;
+    result.reserve(static_cast<size_t>(count));
+    size_t total = system_bytes;
+    for (jsize index = 0; index < count; ++index) {
+        if (ids[index] != index % 2) throw std::invalid_argument("Invalid chat role order");
+        auto item = static_cast<jbyteArray>(env->GetObjectArrayElement(contents, index));
+        check_java(env);
+        try { result.push_back(bytes(env, item, text_limit)); }
+        catch (...) { if (item != nullptr) env->DeleteLocalRef(item); throw; }
+        env->DeleteLocalRef(item);
+        total += result.back().size();
+        if (total > text_limit) throw std::invalid_argument("Invalid request size");
+    }
+    if (result.back().empty()) throw std::invalid_argument("Empty latest user message");
+    return result;
+}
+
+std::string format(Owner & value, const std::string & system, const std::vector<std::string> & contents) {
     if (!value.model) throw std::runtime_error("No model loaded");
-    if (system.size() + user.size() > text_limit || user.empty()) throw std::invalid_argument("Invalid request size");
     const char * tmpl = llama_model_chat_template(value.model.get(), nullptr);
     if (tmpl == nullptr) throw std::runtime_error("Model has no chat template");
     std::vector<llama_chat_message> messages;
     if (!system.empty()) messages.push_back({"system", system.c_str()});
-    messages.push_back({"user", user.c_str()});
-    const int needed = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, nullptr, 0);
-    if (needed <= 0 || needed > static_cast<int>(text_limit + 4096)) {
-        throw std::runtime_error("Unsupported or oversized chat template output");
+    for (size_t index = 0; index < contents.size(); ++index) {
+        messages.push_back({index % 2 == 0 ? "user" : "assistant", contents[index].c_str()});
     }
+    const int needed = llama_chat_apply_template(tmpl, messages.data(), messages.size(), true, nullptr, 0);
+    if (needed <= 0) throw std::runtime_error("Unsupported chat template output");
+    if (needed > static_cast<int>(text_limit + 4096)) throw PromptTooLarge("Oversized chat template output");
     std::vector<char> result(static_cast<size_t>(needed) + 1);
     const int count = llama_chat_apply_template(
         tmpl, messages.data(), messages.size(), true, result.data(), static_cast<int>(result.size())
@@ -198,6 +227,14 @@ std::vector<llama_token> tokenize(const llama_vocab * vocab, const std::string &
     if (count <= 0 || count > static_cast<int>(tokens.size())) throw std::runtime_error("Tokenization retry failed");
     tokens.resize(static_cast<size_t>(count));
     return tokens;
+}
+
+int validate_bos(Owner & value, const llama_vocab * vocab, const std::vector<llama_token> & tokens) {
+    const int count = static_cast<int>(std::count(tokens.begin(), tokens.end(), llama_vocab_bos(vocab)));
+    if (value.profile.require_single_leading_bos && (count != 1 || tokens.front() != llama_vocab_bos(vocab))) {
+        throw std::runtime_error("Model profile requires exactly one leading BOS");
+    }
+    return count;
 }
 
 struct Batch {
@@ -324,22 +361,33 @@ jboolean test_paused(JNIEnv * env, jobject, jlong handle) {
     });
 }
 
-jbyteArray format_prompt(JNIEnv * env, jobject, jlong handle, jbyteArray system, jbyteArray user) {
+jbyteArray format_prompt(JNIEnv * env, jobject, jlong handle, jbyteArray system, jintArray roles, jobjectArray contents) {
     return boundary(env, [&] {
-        const auto prompt = format(owner(handle), bytes(env, system, text_limit), bytes(env, user, text_limit));
+        const auto first = bytes(env, system, text_limit);
+        const auto prompt = format(owner(handle), first, chat_contents(env, roles, contents, first.size()));
         return byte_array(env, prompt.data(), prompt.size());
     });
 }
 
-jint token_count(JNIEnv * env, jobject, jlong handle, jbyteArray system, jbyteArray user) {
+jint token_count(JNIEnv * env, jobject, jlong handle, jbyteArray system, jintArray roles, jobjectArray contents) {
     return boundary(env, [&]() -> jint {
         auto & value = owner(handle);
-        const auto prompt = format(value, bytes(env, system, text_limit), bytes(env, user, text_limit));
-        return static_cast<jint>(tokenize(llama_model_get_vocab(value.model.get()), prompt).size());
+        const auto first = bytes(env, system, text_limit);
+        const auto messages = chat_contents(env, roles, contents, first.size());
+        try {
+            const auto prompt = format(value, first, messages);
+            const auto * vocab = llama_model_get_vocab(value.model.get());
+            const auto tokens = tokenize(vocab, prompt);
+            validate_bos(value, vocab, tokens);
+            return static_cast<jint>(tokens.size());
+        } catch (const PromptTooLarge &) {
+            // An over-limit template needs eviction, without allocating/tokenizing its full output.
+            return input_limit + 1;
+        }
     });
 }
 
-jintArray begin(JNIEnv * env, jobject, jlong handle, jbyteArray system, jbyteArray user,
+jintArray begin(JNIEnv * env, jobject, jlong handle, jbyteArray system, jintArray roles, jobjectArray contents,
                 jint maximum, jint seed, jlong milliseconds) {
     return boundary(env, [&] {
         auto & value = owner(handle);
@@ -350,14 +398,12 @@ jintArray begin(JNIEnv * env, jobject, jlong handle, jbyteArray system, jbyteArr
         value.reset();
         value.expires = Clock::now() + std::chrono::milliseconds(milliseconds);
         if (const int status = value.stopped()) return int_array(env, {status});
-        const auto prompt = format(value, bytes(env, system, text_limit), bytes(env, user, text_limit));
+        const auto first = bytes(env, system, text_limit);
+        const auto prompt = format(value, first, chat_contents(env, roles, contents, first.size()));
         const auto * vocab = llama_model_get_vocab(value.model.get());
         auto tokens = tokenize(vocab, prompt);
         if (tokens.size() > input_limit) throw std::invalid_argument("Formatted input exceeds 3584 tokens");
-        const int bos_count = static_cast<int>(std::count(tokens.begin(), tokens.end(), llama_vocab_bos(vocab)));
-        if (value.profile.require_single_leading_bos && (bos_count != 1 || tokens.front() != llama_vocab_bos(vocab))) {
-            throw std::runtime_error("Model profile requires exactly one leading BOS");
-        }
+        const int bos_count = validate_bos(value, vocab, tokens);
         const auto capacity = llama_n_ctx_seq(value.context.get());
         if (tokens.size() + static_cast<size_t>(maximum) > capacity) {
             throw std::invalid_argument("Input and requested output exceed the actual context");
@@ -448,9 +494,9 @@ JNINativeMethod methods[] = {
     METHOD("destroyNative", "(J)V", destroy),
     METHOD("loadNative", "(J[BIFIFIFFZ)Z", load),
     METHOD("unloadNative", "(J)V", unload),
-    METHOD("formatNative", "(J[B[B)[B", format_prompt),
-    METHOD("tokenCountNative", "(J[B[B)I", token_count),
-    METHOD("beginNative", "(J[B[BIIJ)[I", begin),
+    METHOD("formatNative", "(J[B[I[[B)[B", format_prompt),
+    METHOD("tokenCountNative", "(J[B[I[[B)I", token_count),
+    METHOD("beginNative", "(J[B[I[[BIIJ)[I", begin),
     METHOD("stepNative", "(J)[B", step),
     METHOD("resetNative", "(J)V", reset),
     METHOD("cancelNative", "(J)V", cancel),

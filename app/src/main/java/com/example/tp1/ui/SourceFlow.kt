@@ -18,6 +18,7 @@ import androidx.compose.ui.res.stringResource
 import com.example.tp1.R
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.browser.BrowserViewModel
+import com.example.tp1.chat.ChatViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
 import com.example.tp1.ui.screens.SourceSelectionScreen
@@ -26,12 +27,14 @@ import com.example.tp1.ui.screens.SourceSelectionScreen
 internal fun SourceFlow(
     viewModel: SourcesViewModel,
     browser: BrowserViewModel,
+    chat: ChatViewModel,
     onPick: (SourceKind) -> Unit,
     onOpen: (BrowserEntry) -> Unit,
     onRefresh: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     val browsing by browser.state.collectAsState()
+    val chatting by chat.state.collectAsState()
     val shellState = rememberSaveableStateHolder()
     LaunchedEffect(state.sources, state.restoring) {
         if (!state.restoring) browser.setSources(state.sources)
@@ -57,6 +60,13 @@ internal fun SourceFlow(
             }
             else -> shellState.SaveableStateProvider("shell") {
                 TP1App(
+                    chat = chatting,
+                    onChatSelected = chat::setSelected,
+                    onChatDraftChange = chat::editDraft,
+                    onChatPrepare = chat::prepare,
+                    onChatSend = chat::send,
+                    onChatStop = chat::stop,
+                    onChatRetry = chat::retry,
                     files = browsing.entries.map { it.toFileListItem() },
                     browser = browsing,
                     onEntryClick = { id ->

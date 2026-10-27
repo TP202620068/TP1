@@ -16,7 +16,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-/** Explicit acquisition only. Never loads native code, deletes models or replaces a published inode. */
+/** Explicit acquisition only. Reuses valid models and repairs corrupt ones without loading native code. */
 internal class ModelManager(
     private val directory: File,
     private val definition: (Model) -> ModelProfile = { it.profile },
@@ -43,7 +43,8 @@ internal class ModelManager(
     }
 
     /**
-     * Returns after verified publication or cache reuse. Existing invalid files are reported, never replaced.
+     * Returns after verified publication or cache reuse. Corrupt files are atomically replaced only after
+     * a verified replacement is staged; other local IO failures are reported without attempting repair.
      * Cancellation is checked between reads and before publication. A blocking network call may take until
      * its connect/read timeout to return; cleanup completes before this operation releases acquisition.
      */
@@ -53,9 +54,14 @@ internal class ModelManager(
             val artifact = profile(model).artifact
             val file = location(model)
             if (file.exists()) {
-                ModelFile.verify(file, artifact) { coroutine.ensureActive() }
-                return@withLock
+                try {
+                    ModelFile.verify(file, artifact) { coroutine.ensureActive() }
+                    return@withLock
+                } catch (_: ModelIntegrityException) {
+                    // Keep the corrupt inode until a verified replacement is ready for publication.
+                }
             }
+            coroutine.ensureActive()
             val connection = connect(URL(artifact.url))
             try {
                 connection.connectTimeout = 15_000

@@ -50,7 +50,7 @@ class LlamaBridgeTest {
         } finally { root.deleteRecursively() }
     }
 
-    @Test fun smallDownloadExercisesAndroidPublicationAndCacheReuse() = runBlocking<Unit> {
+    @Test fun smallDownloadExercisesAndroidPublicationRepairAndCacheReuse() = runBlocking<Unit> {
         val root = File(context.cacheDir, "model-fixture-${System.nanoTime()}")
         val bytes = "verified Android fixture".toByteArray()
         val artifact = ModelArtifact("fixture.gguf", "https://example.invalid/model", bytes.size.toLong(),
@@ -72,6 +72,17 @@ class LlamaBridgeTest {
             assertTrue(models.isAvailable(Model.Test))
             assertArrayEquals(bytes, models.location(Model.Test).readBytes())
             assertEquals(1, connections)
+
+            val file = models.location(Model.Test)
+            assertTrue(file.setWritable(true))
+            file.writeBytes(ByteArray(bytes.size))
+            assertTrue(file.setReadOnly())
+            assertFalse(models.isAvailable(Model.Test))
+            models.download(Model.Test)
+            models.download(Model.Test)
+            assertTrue(models.isAvailable(Model.Test))
+            assertArrayEquals(bytes, file.readBytes())
+            assertEquals(2, connections)
             assertEquals(setOf(artifact.name, ".publish.lock"), root.list()!!.toSet())
         } finally { root.deleteRecursively() }
     }

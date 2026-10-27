@@ -34,6 +34,7 @@ import com.example.tp1.R
 import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.browser.BrowserState
 import com.example.tp1.browser.BrowserProblem
+import com.example.tp1.chat.ChatState
 import com.example.tp1.ui.screens.ChatComposer
 import com.example.tp1.ui.screens.ChatScreen
 import com.example.tp1.ui.screens.ExplorerScreen
@@ -51,17 +52,24 @@ internal fun TP1App(
     onAncestor: (Int) -> Unit = {},
     onBrowserBack: () -> Unit = {},
     onRetry: () -> Unit = {},
-    onMessageDismissed: (BrowserProblem) -> Unit = {}
+    onMessageDismissed: (BrowserProblem) -> Unit = {},
+    chat: ChatState = ChatState(),
+    onChatSelected: (Boolean) -> Unit = {},
+    onChatDraftChange: (String) -> Unit = {},
+    onChatPrepare: () -> Unit = {},
+    onChatSend: () -> Unit = {},
+    onChatStop: () -> Unit = {},
+    onChatRetry: () -> Unit = {}
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(initialTab) }
     var query by rememberSaveable { mutableStateOf("") }
-    var draft by rememberSaveable { mutableStateOf("") }
     val screenState = rememberSaveableStateHolder()
     val focusManager = LocalFocusManager.current
     val snackbar = remember { SnackbarHostState() }
     val problem = browser.message
     val problemText = problem?.let { stringResource(it.messageResource()) }
     val retry = stringResource(R.string.retry)
+    LaunchedEffect(selectedTab) { onChatSelected(selectedTab == AppTab.Chat) }
     LaunchedEffect(problem, selectedTab) {
         if (problem == null || selectedTab != AppTab.Explorer) return@LaunchedEffect
         try {
@@ -80,6 +88,7 @@ internal fun TP1App(
     val selectTab: (AppTab) -> Unit = { tab ->
         focusManager.clearFocus()
         selectedTab = tab
+        onChatSelected(tab == AppTab.Chat)
     }
     BackHandler(enabled = selectedTab == AppTab.Explorer && !browser.atRoots, onBack = onBrowserBack)
 
@@ -103,7 +112,8 @@ internal fun TP1App(
             Surface(color = MaterialTheme.colorScheme.background) {
                 Column {
                     if (selectedTab == AppTab.Chat) {
-                        ChatComposer(draft = draft, onDraftChange = { draft = it })
+                        ChatComposer(state = chat, onDraftChange = onChatDraftChange,
+                            onPrepare = onChatPrepare, onSend = onChatSend, onStop = onChatStop)
                     }
                     AppNavigation(selectedTab = selectedTab, onTabSelected = selectTab)
                 }
@@ -123,7 +133,7 @@ internal fun TP1App(
                     onAncestor = onAncestor,
                     onRetry = onRetry
                 )
-                AppTab.Chat -> ChatScreen(contentPadding = padding)
+                AppTab.Chat -> ChatScreen(state = chat, contentPadding = padding, onRetry = onChatRetry)
             }
         }
     }

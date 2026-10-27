@@ -199,4 +199,37 @@ class InferenceSessionTest {
         }
         assertReleased()
     }
+
+    @Test fun systemAndHistoryUseRealRolesAndStreamWithinTheBudget() = runBlocking<Unit> {
+        val engine = LlamaEngine(models)
+        val system = "You are helpful. Reply briefly."
+        val session = InferenceSession.open(Model.Test, engine, system)
+        try {
+            val history = listOf(ChatMessage(ChatRole.User, "My name is Ana."), ChatMessage(ChatRole.Assistant, "Hello Ana."))
+            val messages = session.prepare("Say hello.", history)
+            assertEquals(history + ChatMessage(ChatRole.User, "Say hello."), messages)
+            assertEquals("<|im_start|>system\n$system<|im_end|>\n" +
+                "<|im_start|>user\nMy name is Ana.<|im_end|>\n" +
+                "<|im_start|>assistant\nHello Ana.<|im_end|>\n" +
+                "<|im_start|>user\nSay hello.<|im_end|>\n<|im_start|>assistant\n", engine.formatPrompt(system, messages))
+            val count = engine.tokenCount(system, messages)
+            val events = session.stream(messages).toList()
+            val info = events.first() as GenerationEvent.Started
+            assertEquals(count, info.inputTokens)
+            assertEquals(1, info.bosCount)
+            assertEquals(4096, info.contextTokens)
+            assertTrue(info.inputTokens + 256 < info.contextTokens)
+            assertTrue(info.inputTokens <= 3584)
+            assertTrue(events.any { it is GenerationEvent.Text && it.value.isNotEmpty() })
+            assertTrue(events.last() is GenerationEvent.Finished)
+            assertTrue((events.last() as GenerationEvent.Finished).reason in setOf(FinishReason.EOG, FinishReason.LENGTH))
+
+            val largeHistory = listOf(ChatMessage(ChatRole.User, "a" + " a".repeat(3600)),
+                ChatMessage(ChatRole.Assistant, "Old answer")) + history
+            assertEquals(messages, session.prepare("Say hello.", largeHistory))
+            try { session.prepare("a" + " a".repeat(3600)); fail("Oversized latest input accepted") }
+            catch (_: IllegalArgumentException) { }
+        } finally { session.closeAsync().await() }
+        assertReleased()
+    }
 }
