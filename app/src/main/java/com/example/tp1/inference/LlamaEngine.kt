@@ -33,8 +33,8 @@ internal sealed interface GenerationEvent {
 }
 
 /** Manually owned, never collection-owned. closeAsync().await() is the resource-release barrier. */
-internal class LlamaEngine(context: Context) {
-    private val context = context.applicationContext
+internal class LlamaEngine(private val models: ModelManager) {
+    constructor(context: Context) : this(ModelManager(context))
     private val lock = Any()
     private val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "TP1-inference") }
     private var handle = createNative()
@@ -48,14 +48,14 @@ internal class LlamaEngine(context: Context) {
     // 0 idle, 1 native load, 2 prefill, 3 decode. Diagnostic only, not a synchronization primitive.
     val phase: Int get() = synchronized(lock) { if (handle == 0L) 0 else phaseNative(handle) }
 
-    suspend fun load() {
+    suspend fun load(selected: Model = Model.Test) {
         val coroutine = currentCoroutineContext()
         operation(onCancelled = ::releaseModel) { owner ->
             check(model == null) { "Model already loaded" }
             check(ExtractionArtifacts.permit.tryLock()) { "Extraction or another model owns the native memory permit" }
             memoryPermit = true
             try {
-                model = ModelFile.open(context, coroutine) { cancelledNative(owner) }
+                model = models.open(selected, coroutine) { cancelledNative(owner) }
                 val fd = checkNotNull(model).fd
                 if (!loadNative(owner, "/proc/self/fd/$fd".toByteArray(Charsets.UTF_8), Runtime.getRuntime().availableProcessors().coerceIn(1, 4))) {
                     throw CancellationException("Model loading cancelled")

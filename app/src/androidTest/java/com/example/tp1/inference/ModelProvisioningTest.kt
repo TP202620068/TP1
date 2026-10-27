@@ -16,8 +16,9 @@ class ModelProvisioningTest {
         }
         val input = File(path).canonicalFile
         require(input.parentFile == context.cacheDir.canonicalFile) { "Input must be a direct target-app cache file" }
-        input.inputStream().use { ModelFile.provision(context, it) }
-        assertEquals(ModelFile.bytes, ModelFile.location(context).length())
+        val destination = ModelManager(context).location(Model.Test)
+        input.inputStream().use { ModelFile.provision(destination, Model.Test.artifact, it) { } }
+        assertEquals(Model.Test.artifact.bytes, destination.length())
         assertTrue("Remove staging input after successful publication", input.delete())
     }
 }

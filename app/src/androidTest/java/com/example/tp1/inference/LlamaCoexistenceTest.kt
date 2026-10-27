@@ -8,7 +8,6 @@ import com.example.tp1.browser.DocumentBrowser
 import com.example.tp1.extraction.DocumentExtractor
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourceStore
-import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
@@ -44,28 +43,23 @@ class LlamaCoexistenceTest {
         } finally { store.remove(store.restore().sources, uri) }
     }
 
-    private suspend fun infer(engine: LlamaEngine, text: String) {
-        engine.load()
-        val events = engine.generate("Reply briefly.", "Read this excerpt, then say hello:\n$text", 16, 42).toList()
-        assertTrue(events.filterIsInstance<GenerationEvent.Text>().any { it.value.isNotBlank() })
-        val end = events.last() as GenerationEvent.Finished
-        assertTrue(end.reason in setOf(FinishReason.EOG, FinishReason.LENGTH))
-        assertTrue(end.generatedTokens in 1..16)
-        engine.unload()
+    private suspend fun infer(text: String) {
+        val session = InferenceSession.open(ModelManager(context), Model.Test)
+        try {
+            val response = session.infer("Read this excerpt, then say hello:\n$text")
+            assertTrue(response.text.isNotBlank())
+            assertTrue(response.finishReason in setOf(FinishReason.EOG, FinishReason.LENGTH))
+            assertTrue(response.generatedTokens in 1..32)
+        } finally { session.close() }
     }
 
     @Test fun extractionThenInference() = runBlocking<Unit> {
         val text = extract() // Loads AnyDoc before constructing the inference bridge.
-        val engine = LlamaEngine(context)
-        try { repeat(2) { infer(engine, if (it == 0) text else extract()) } }
-        finally { engine.closeAsync().await() }
+        repeat(2) { infer(if (it == 0) text else extract()) }
     }
 
     @Test fun inferenceThenExtractionThenInference() = runBlocking<Unit> {
-        val engine = LlamaEngine(context)
-        try {
-            infer(engine, "Synthetic fixture") // Model is unloaded before parsing.
-            repeat(2) { infer(engine, extract()) }
-        } finally { engine.closeAsync().await() }
+        infer("Synthetic fixture") // Session closes before parsing.
+        repeat(2) { infer(extract()) }
     }
 }

@@ -233,7 +233,7 @@ class LlamaModelTest {
     }
 
     @Test fun failedMissingModelLoadCanRetryAfterRestoration() = runBlocking<Unit> {
-        val file = ModelFile.location(context)
+        val file = ModelManager(context).location(Model.Test)
         check(file.isFile) { "Provision the pinned model first" }
         val temporarilyMoved = java.io.File(file.parentFile, "retry-model.part")
         check(!temporarilyMoved.exists())
