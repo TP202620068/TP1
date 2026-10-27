@@ -22,7 +22,7 @@ internal data class InferenceResponse(
  * Always close in finally; close waits for native work even when the calling coroutine is cancelled.
  */
 internal class InferenceSession private constructor(val model: Model, private val engine: LlamaEngine) {
-    /** Uses the engine's bounded 32-token/120-second defaults. Context/history are a later addition. */
+    /** Uses a 4096-token context, at most 256 generated tokens and a 120-second cooperative deadline. */
     suspend fun infer(text: String): InferenceResponse = engine.generate("", text).toInferenceResponse()
 
     /** Stops the current request, retaining loaded weights for the next independent request. */

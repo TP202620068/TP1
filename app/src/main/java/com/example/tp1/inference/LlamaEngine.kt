@@ -55,9 +55,14 @@ internal class LlamaEngine(private val models: ModelManager) {
             check(ExtractionArtifacts.permit.tryLock()) { "Extraction or another model owns the native memory permit" }
             memoryPermit = true
             try {
+                val profile = models.profile(selected)
+                val sampling = profile.sampling
                 model = models.open(selected, coroutine) { cancelledNative(owner) }
                 val fd = checkNotNull(model).fd
-                if (!loadNative(owner, "/proc/self/fd/$fd".toByteArray(Charsets.UTF_8), Runtime.getRuntime().availableProcessors().coerceIn(1, 4))) {
+                if (!loadNative(owner, "/proc/self/fd/$fd".toByteArray(Charsets.UTF_8),
+                        Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
+                        sampling.temperature, sampling.topK, sampling.repetitionPenalty, sampling.repetitionWindow,
+                        sampling.frequencyPenalty, sampling.presencePenalty, profile.requireSingleLeadingBos)) {
                     throw CancellationException("Model loading cancelled")
                 }
             } catch (error: Throwable) {
@@ -68,8 +73,7 @@ internal class LlamaEngine(private val models: ModelManager) {
     }
 
     /** No chat history is retained. Recollection is a new explicit request. Concurrent work is rejected. */
-    fun generate(system: String, user: String, maxNewTokens: Int = 32, seed: Int = -1,
-                 deadlineMillis: Long = 120_000): Flow<GenerationEvent> = flow {
+    fun generate(system: String, user: String, maxNewTokens: Int = 256, seed: Int = -1, deadlineMillis: Long = 120_000): Flow<GenerationEvent> = flow {
         val current = Delivery()
         synchronized(lock) {
             check(closing == null && request == null && delivery == null) { "Engine closed or busy" }
@@ -261,7 +265,9 @@ internal class LlamaEngine(private val models: ModelManager) {
 
     private external fun createNative(): Long
     private external fun destroyNative(owner: Long)
-    private external fun loadNative(owner: Long, path: ByteArray, threads: Int): Boolean
+    private external fun loadNative(owner: Long, path: ByteArray, threads: Int,
+                                    temperature: Float, topK: Int, repetitionPenalty: Float, repetitionWindow: Int,
+                                    frequencyPenalty: Float, presencePenalty: Float, requireSingleLeadingBos: Boolean): Boolean
     private external fun unloadNative(owner: Long)
     private external fun formatNative(owner: Long, system: ByteArray, user: ByteArray): ByteArray
     private external fun tokenCountNative(owner: Long, system: ByteArray, user: ByteArray): Int

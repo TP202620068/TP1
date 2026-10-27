@@ -31,7 +31,7 @@ class LlamaBridgeTest {
         val models = ModelManager(File(root, "models"))
         try {
             assertThrows(IOException::class.java) {
-                ModelFile.provision(models.location(Model.Test), Model.Test.artifact, ByteArrayInputStream("GGUFbad".toByteArray())) { }
+                ModelFile.provision(models.location(Model.Test), Model.Test.profile.artifact, ByteArrayInputStream("GGUFbad".toByteArray())) { }
             }
             assertFalse(models.location(Model.Test).exists())
             assertTrue(File(root, "models").listFiles().orEmpty().isEmpty())
@@ -56,7 +56,7 @@ class LlamaBridgeTest {
         val artifact = ModelArtifact("fixture.gguf", "https://example.invalid/model", bytes.size.toLong(),
             MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) })
         var connections = 0
-        val models = ModelManager(root, { artifact }, { url ->
+        val models = ModelManager(root, { Model.Test.profile.copy(artifact = artifact) }, { url ->
             connections++
             object : HttpURLConnection(url) {
                 override fun connect() { }

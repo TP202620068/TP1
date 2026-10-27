@@ -31,7 +31,7 @@ class ModelManagerTest {
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) })
 
     private fun manager(directory: File, connection: () -> HttpURLConnection) =
-        ModelManager(directory, { artifact }, { connection() })
+        ModelManager(directory, { Model.Test.profile.copy(artifact = artifact) }, { connection() })
 
     @Test fun verifiedDownloadAndOfflineCacheReuse() = runBlocking<Unit> {
         val directory = temporary.newFolder()

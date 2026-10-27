@@ -15,6 +15,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.*
@@ -48,7 +49,7 @@ class InferenceSessionTest {
                 val response = session.infer("Reply with the word hello.")
                 assertTrue(response.text.isNotBlank())
                 assertTrue(response.finishReason in setOf(FinishReason.EOG, FinishReason.LENGTH))
-                assertTrue(response.generatedTokens in 1..32)
+                assertTrue(response.generatedTokens in 1..256)
                 assertTrue(response.incompleteUtf8Bytes in 0..3)
             }
             assertFalse(ExtractionArtifacts.permit.tryLock())
@@ -115,6 +116,8 @@ class InferenceSessionTest {
         val engine = LlamaEngine(models)
         val session = InferenceSession.open(Model.Test, engine)
         try {
+            val prepared = engine.generate("", "Hello", maxNewTokens = 1).toList()
+            assertEquals(4096, (prepared.first() as GenerationEvent.Started).contextTokens)
             engine.testControl(failDecode = true)
             val failure = session.infer("Say hello.")
             assertEquals(FinishReason.NATIVE_FAILURE, failure.finishReason)
@@ -122,12 +125,12 @@ class InferenceSessionTest {
             engine.testControl(forceLength = true)
             val started = SystemClock.elapsedRealtime()
             val response = session.infer("Count upward from 1, continuing the sequence.")
-            if (response.finishReason == FinishReason.LENGTH) assertEquals(32, response.generatedTokens)
+            if (response.finishReason == FinishReason.LENGTH) assertEquals(256, response.generatedTokens)
             else {
                 assertEquals(FinishReason.DEADLINE, response.finishReason)
                 assertTrue("Deadline must not finish early", SystemClock.elapsedRealtime() - started >= 120_000)
             }
-            assertTrue(response.generatedTokens in 0..32)
+            assertTrue(response.generatedTokens in 0..256)
         } finally { session.close() }
     }
 
@@ -159,5 +162,41 @@ class InferenceSessionTest {
             resume.countDown()
             pending.cancelAndJoin()
         }
+    }
+
+    @Test fun selectedProfileControlsNativeBosPolicyAndGreedySampling() = runBlocking<Unit> {
+        // The fixture's tokenizer recognizes this as its BOS, in addition to the automatic leading BOS.
+        val prompt = "<|startoftext|> Say hello."
+        val strict = LlamaEngine(models)
+        try {
+            strict.load()
+            val end = strict.generate("", prompt, 1, 42).toList().last() as GenerationEvent.Finished
+            assertEquals(FinishReason.NATIVE_FAILURE, end.reason)
+            assertTrue(end.detail!!.contains("requires exactly one leading BOS"))
+        } finally { strict.closeAsync().await() }
+
+        val defaults = Model.Test.profile.sampling
+        // Exercise temperature and top-k independently instead of enabling both greedy controls together.
+        for (sampling in listOf(defaults.copy(temperature = 0f), defaults.copy(topK = 1))) {
+            val profile = Model.Test.profile.copy(sampling = sampling, requireSingleLeadingBos = false)
+            val configured = ModelManager(models.location(Model.Test).parentFile!!, { profile },
+                connect = { error("Profile selection must not download") })
+            val engine = LlamaEngine(configured)
+            val session = InferenceSession.open(Model.Test, engine)
+            try {
+                val events = engine.generate("", prompt, 1, 42).toList()
+                assertEquals(2, (events.first() as GenerationEvent.Started).bosCount)
+                assertTrue((events.last() as GenerationEvent.Finished).reason in setOf(FinishReason.EOG, FinishReason.LENGTH))
+                engine.testControl(forceLength = true)
+                val outputs = listOf(42, 43).map { seed ->
+                    val generated = engine.generate("", "Count upward from 1.", 8, seed).toList()
+                    assertEquals(FinishReason.LENGTH, (generated.last() as GenerationEvent.Finished).reason)
+                    generated.filterIsInstance<GenerationEvent.Text>().joinToString("") { it.value }
+                }
+                assertTrue(outputs.first().isNotEmpty())
+                assertEquals("Greedy sampling must not depend on the random seed", outputs.first(), outputs.last())
+            } finally { session.close() }
+        }
+        assertReleased()
     }
 }

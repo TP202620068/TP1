@@ -49,7 +49,7 @@ class LlamaCoexistenceTest {
             val response = session.infer("Read this excerpt, then say hello:\n$text")
             assertTrue(response.text.isNotBlank())
             assertTrue(response.finishReason in setOf(FinishReason.EOG, FinishReason.LENGTH))
-            assertTrue(response.generatedTokens in 1..32)
+            assertTrue(response.generatedTokens in 1..256)
         } finally { session.close() }
     }
 

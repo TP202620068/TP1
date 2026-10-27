@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -80,6 +81,16 @@ using Model = std::unique_ptr<llama_model, decltype(&llama_model_free)>;
 using Context = std::unique_ptr<llama_context, decltype(&llama_free)>;
 using Sampler = std::unique_ptr<llama_sampler, decltype(&llama_sampler_free)>;
 
+struct ModelProfile {
+    float temperature;
+    int top_k;
+    float repetition_penalty;
+    int repetition_window;
+    float frequency_penalty;
+    float presence_penalty;
+    bool require_single_leading_bos;
+};
+
 struct Owner {
     // Only stop and phase are touched outside the Kotlin-owned worker.
     std::atomic<bool> stop{false};
@@ -87,6 +98,7 @@ struct Owner {
     Model model{nullptr, llama_model_free};
     Context context{nullptr, llama_free};
     Sampler sampler{nullptr, llama_sampler_free};
+    ModelProfile profile{}; // Assigned only when a model/context has loaded successfully.
     Clock::time_point expires = Clock::time_point::max();
     int threads = 1;
     int generated = 0;
@@ -228,11 +240,19 @@ void destroy(JNIEnv * env, jobject, jlong handle) {
     boundary(env, [&] { delete &owner(handle); });
 }
 
-jboolean load(JNIEnv * env, jobject, jlong handle, jbyteArray path, jint threads) {
+jboolean load(JNIEnv * env, jobject, jlong handle, jbyteArray path, jint threads,
+              jfloat temperature, jint top_k, jfloat repetition_penalty, jint repetition_window,
+              jfloat frequency_penalty, jfloat presence_penalty, jboolean require_single_leading_bos) {
     return boundary(env, [&]() -> jboolean {
         auto & value = owner(handle);
         if (value.model || value.context) throw std::runtime_error("Model already loaded");
         if (threads < 1 || threads > 4) throw std::invalid_argument("Invalid inference thread count");
+        if (!std::isfinite(temperature) || temperature < 0 || top_k < 1 ||
+                !std::isfinite(repetition_penalty) || repetition_penalty <= 0 ||
+                repetition_window < 0 || repetition_window > context_limit ||
+                !std::isfinite(frequency_penalty) || !std::isfinite(presence_penalty)) {
+            throw std::invalid_argument("Invalid model sampling profile");
+        }
         const auto name = bytes(env, path, 4096);
         value.phase.store(1);
         value.expires = Clock::time_point::max();
@@ -263,6 +283,8 @@ jboolean load(JNIEnv * env, jobject, jlong handle, jbyteArray path, jint threads
         value.model = std::move(model);
         value.context = std::move(context);
         value.threads = threads;
+        value.profile = {temperature, top_k, repetition_penalty, repetition_window,
+            frequency_penalty, presence_penalty, require_single_leading_bos == JNI_TRUE};
         return JNI_TRUE;
     });
 }
@@ -333,8 +355,8 @@ jintArray begin(JNIEnv * env, jobject, jlong handle, jbyteArray system, jbyteArr
         auto tokens = tokenize(vocab, prompt);
         if (tokens.size() > input_limit) throw std::invalid_argument("Formatted input exceeds 3584 tokens");
         const int bos_count = static_cast<int>(std::count(tokens.begin(), tokens.end(), llama_vocab_bos(vocab)));
-        if (bos_count != 1 || tokens.front() != llama_vocab_bos(vocab)) {
-            throw std::runtime_error("Expected exactly one leading BOS for the pinned model");
+        if (value.profile.require_single_leading_bos && (bos_count != 1 || tokens.front() != llama_vocab_bos(vocab))) {
+            throw std::runtime_error("Model profile requires exactly one leading BOS");
         }
         const auto capacity = llama_n_ctx_seq(value.context.get());
         if (tokens.size() + static_cast<size_t>(maximum) > capacity) {
@@ -353,9 +375,11 @@ jintArray begin(JNIEnv * env, jobject, jlong handle, jbyteArray system, jbyteArr
                 llama_vocab_n_tokens(vocab), static_cast<int32_t>(biases.size()), biases.data()));
         }
 #endif
-        llama_sampler_chain_add(value.sampler.get(), llama_sampler_init_penalties(llama_vocab_n_tokens(vocab), 64, 1.05f, 0.0f, 0.0f));
-        llama_sampler_chain_add(value.sampler.get(), llama_sampler_init_top_k(50));
-        llama_sampler_chain_add(value.sampler.get(), llama_sampler_init_temp(0.1f));
+        const auto & profile = value.profile;
+        llama_sampler_chain_add(value.sampler.get(), llama_sampler_init_penalties(llama_vocab_n_tokens(vocab),
+            profile.repetition_window, profile.repetition_penalty, profile.frequency_penalty, profile.presence_penalty));
+        llama_sampler_chain_add(value.sampler.get(), llama_sampler_init_top_k(profile.top_k));
+        llama_sampler_chain_add(value.sampler.get(), llama_sampler_init_temp(profile.temperature));
         llama_sampler_chain_add(value.sampler.get(), llama_sampler_init_dist(static_cast<uint32_t>(seed)));
         for (const auto token : tokens) llama_sampler_accept(value.sampler.get(), token);
         value.maximum = maximum;
@@ -422,7 +446,7 @@ jbyteArray step(JNIEnv * env, jobject, jlong handle) {
 JNINativeMethod methods[] = {
     METHOD("createNative", "()J", create),
     METHOD("destroyNative", "(J)V", destroy),
-    METHOD("loadNative", "(J[BI)Z", load),
+    METHOD("loadNative", "(J[BIFIFIFFZ)Z", load),
     METHOD("unloadNative", "(J)V", unload),
     METHOD("formatNative", "(J[B[B)[B", format_prompt),
     METHOD("tokenCountNative", "(J[B[B)I", token_count),

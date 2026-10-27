@@ -20,7 +20,7 @@ class ModelDownloadInferenceTest {
             assertFalse(models.isAvailable(Model.Test))
             models.download(Model.Test)
             assertTrue(models.isAvailable(Model.Test))
-            assertEquals(Model.Test.artifact.bytes, models.location(Model.Test).length())
+            assertEquals(Model.Test.profile.artifact.bytes, models.location(Model.Test).length())
             val offline = ModelManager(root, connect = { error("Cached download/inference attempted network access") })
             repeat(2) {
                 offline.download(Model.Test)

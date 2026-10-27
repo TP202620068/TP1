@@ -16,39 +16,23 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-internal enum class Model(internal val artifact: ModelArtifact) {
-    Test(ModelArtifact(
-        name = "LFM2.5-230M-Q4_K_M.gguf",
-        url = "https://huggingface.co/LiquidAI/LFM2.5-230M-GGUF/resolve/03502067c64ce32ac4fe87b0cec0310a1a13d3e9/LFM2.5-230M-Q4_K_M.gguf",
-        bytes = 153406304L,
-        sha256 = "7bbd90384d3deffe4c646ec9643b212802d32d4ce417c90a1ec9282100650062"
-    ))
-}
-
-/** Internal metadata also lets small fixtures exercise the real acquisition path without model weights. */
-internal data class ModelArtifact(val name: String, val url: String, val bytes: Long, val sha256: String) {
-    init {
-        require(name.isNotEmpty() && name != "." && name != ".." && '/' !in name && '\\' !in name)
-        require(URL(url).protocol == "https" && bytes > 0 && sha256.matches(Regex("[0-9a-f]{64}")))
-    }
-}
-
 /** Explicit acquisition only. Never loads native code, deletes models or replaces a published inode. */
 internal class ModelManager(
     private val directory: File,
-    private val definition: (Model) -> ModelArtifact = { it.artifact },
+    private val definition: (Model) -> ModelProfile = { it.profile },
     private val connect: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }
 ) {
     constructor(context: Context) : this(File(context.applicationContext.noBackupFilesDir, "models"))
 
-    internal fun location(model: Model): File = File(directory, definition(model).name)
+    internal fun profile(model: Model): ModelProfile = definition(model)
+    internal fun location(model: Model): File = File(directory, profile(model).artifact.name)
 
     /** Rehashes local bytes. Missing/corrupt artifacts return false; other IO failures are reported. */
     suspend fun isAvailable(model: Model): Boolean = withContext(Dispatchers.IO) {
         val coroutine = currentCoroutineContext()
         val file = location(model)
         try {
-            ModelFile.verify(file, definition(model)) { coroutine.ensureActive() }
+            ModelFile.verify(file, profile(model).artifact) { coroutine.ensureActive() }
             true
         } catch (_: ModelIntegrityException) {
             false
@@ -66,7 +50,7 @@ internal class ModelManager(
     suspend fun download(model: Model): Unit = withContext(Dispatchers.IO) {
         acquisition.withLock {
             val coroutine = currentCoroutineContext()
-            val artifact = definition(model)
+            val artifact = profile(model).artifact
             val file = location(model)
             if (file.exists()) {
                 ModelFile.verify(file, artifact) { coroutine.ensureActive() }
@@ -95,7 +79,7 @@ internal class ModelManager(
 
     /** Called only on the inference worker. No descriptor escapes to ordinary callers. */
     internal fun open(model: Model, coroutine: CoroutineContext, cancelled: () -> Boolean): ParcelFileDescriptor =
-        ModelFile.open(location(model), definition(model)) {
+        ModelFile.open(location(model), profile(model).artifact) {
             coroutine.ensureActive()
             if (cancelled()) throw CancellationException("Model verification cancelled")
         }

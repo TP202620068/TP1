@@ -56,7 +56,17 @@
 }
 -keep,allowoptimization enum com.example.tp1.inference.Model {
     public static com.example.tp1.inference.Model Test;
-    public com.example.tp1.inference.ModelArtifact getArtifact$app();
+    public com.example.tp1.inference.ModelProfile getProfile$app();
+}
+-keep,allowoptimization class com.example.tp1.inference.ModelProfile {
+    public <init>(com.example.tp1.inference.ModelArtifact, com.example.tp1.inference.ModelSampling, boolean);
+    public com.example.tp1.inference.ModelArtifact getArtifact();
+    public com.example.tp1.inference.ModelSampling getSampling();
+    public static com.example.tp1.inference.ModelProfile copy$default(com.example.tp1.inference.ModelProfile, com.example.tp1.inference.ModelArtifact, com.example.tp1.inference.ModelSampling, boolean, int, java.lang.Object);
+}
+-keep,allowoptimization class com.example.tp1.inference.ModelSampling {
+    public <init>(float, int, float, int, float, float);
+    public static com.example.tp1.inference.ModelSampling copy$default(com.example.tp1.inference.ModelSampling, float, int, float, int, float, float, int, java.lang.Object);
 }
 -keep,allowoptimization class com.example.tp1.inference.ModelArtifact {
     public <init>(java.lang.String, java.lang.String, long, java.lang.String);
