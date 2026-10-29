@@ -43,6 +43,13 @@ class LlamaBridgeTest {
         try {
             val models = ModelManager(root, connect = { error("Opening a session must never download") })
             try { InferenceSession.open(models, Model.Test); fail("Missing model accepted") } catch (_: IOException) { }
+            try { EmbeddingSession.open(models); fail("Missing embedding model accepted") } catch (_: IOException) { }
+            for (limit in listOf(0, 8193)) {
+                try { EmbeddingSession.open(models, limit); fail("Invalid token limit accepted") }
+                catch (_: IllegalArgumentException) { }
+            }
+            try { InferenceSession.open(models, Model.JinaV5NanoRetrieval); fail("Embedding model accepted as chat") }
+            catch (_: IllegalArgumentException) { }
             assertFalse(models.isAvailable(Model.Test))
             val released = ExtractionArtifacts.permit.tryLock()
             if (released) ExtractionArtifacts.permit.unlock()

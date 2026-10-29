@@ -38,6 +38,11 @@
     public int getPhase();
     public boolean getTestPaused();
     public java.lang.Object load(com.example.tp1.inference.Model, kotlin.coroutines.Continuation);
+    public java.lang.Object loadEmbedding(int, kotlin.coroutines.Continuation);
+    public java.lang.Object embed(byte[], kotlin.coroutines.Continuation);
+    public java.lang.Object countEmbeddingTokens(byte[], kotlin.coroutines.Continuation);
+    public java.lang.Object withEmbeddingTokenCounter(kotlin.jvm.functions.Function2, kotlin.coroutines.Continuation);
+    public java.lang.Object testEmbeddingTokens(byte[], kotlin.coroutines.Continuation);
     public static java.lang.Object load$default(com.example.tp1.inference.LlamaEngine, com.example.tp1.inference.Model, kotlin.coroutines.Continuation, int, java.lang.Object);
     public kotlinx.coroutines.flow.Flow generate(java.lang.String, java.lang.String, int, int, long);
     public static kotlinx.coroutines.flow.Flow generate$default(com.example.tp1.inference.LlamaEngine, java.lang.String, java.lang.String, int, int, long, int, java.lang.Object);
@@ -58,6 +63,7 @@
 }
 -keep,allowoptimization enum com.example.tp1.inference.Model {
     public static com.example.tp1.inference.Model Test;
+    public static com.example.tp1.inference.Model JinaV5NanoRetrieval;
     public com.example.tp1.inference.ModelProfile getProfile$app();
 }
 -keep,allowoptimization class com.example.tp1.inference.ModelProfile {
@@ -99,6 +105,35 @@
     public static java.lang.Object open$default(com.example.tp1.inference.InferenceSession$Companion, com.example.tp1.inference.ModelManager, com.example.tp1.inference.Model, java.lang.String, kotlin.coroutines.Continuation, int, java.lang.Object);
     public java.lang.Object open$app(com.example.tp1.inference.Model, com.example.tp1.inference.LlamaEngine, java.lang.String, kotlin.coroutines.Continuation);
     public static java.lang.Object open$app$default(com.example.tp1.inference.InferenceSession$Companion, com.example.tp1.inference.Model, com.example.tp1.inference.LlamaEngine, java.lang.String, kotlin.coroutines.Continuation, int, java.lang.Object);
+}
+-keep,allowoptimization class com.example.tp1.inference.EmbeddingSession {
+    public int getMaxInputTokens();
+    public java.lang.Object embedDocument(java.lang.String, kotlin.coroutines.Continuation);
+    public java.lang.Object embedQuery(java.lang.String, kotlin.coroutines.Continuation);
+    public java.lang.Object countDocumentTokens(java.lang.String, kotlin.coroutines.Continuation);
+    public java.lang.Object chunkDocument(java.lang.String, kotlin.coroutines.Continuation);
+    public void cancel();
+    public kotlinx.coroutines.Deferred closeAsync();
+    public java.lang.Object close(kotlin.coroutines.Continuation);
+    public static com.example.tp1.inference.EmbeddingSession$Companion Companion;
+}
+-keep,allowoptimization class com.example.tp1.inference.EmbeddingSession$Companion {
+    public java.lang.Object open(com.example.tp1.inference.ModelManager, int, kotlin.coroutines.Continuation);
+    public static java.lang.Object open$default(com.example.tp1.inference.EmbeddingSession$Companion, com.example.tp1.inference.ModelManager, int, kotlin.coroutines.Continuation, int, java.lang.Object);
+    public java.lang.Object open$app(com.example.tp1.inference.LlamaEngine, int, kotlin.coroutines.Continuation);
+    public static java.lang.Object open$app$default(com.example.tp1.inference.EmbeddingSession$Companion, com.example.tp1.inference.LlamaEngine, int, kotlin.coroutines.Continuation, int, java.lang.Object);
+}
+-keep,allowoptimization class com.example.tp1.inference.EmbeddingSessionKt {
+    public static byte[] embeddingInput(java.lang.String, boolean);
+}
+-keep,allowoptimization class com.example.tp1.extraction.MarkdownChunk {
+    public java.lang.String getText();
+    public int getStartByte();
+    public int getEndByte();
+    public int getCoreStartByte();
+    public int getCoreEndByte();
+    public int getCoreCharacters();
+    public int getInputTokens();
 }
 -keep,allowoptimization class com.example.tp1.inference.InferenceResponse {
     public java.lang.String getText();

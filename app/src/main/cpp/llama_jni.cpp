@@ -22,6 +22,7 @@ using Clock = std::chrono::steady_clock;
 constexpr int context_limit = 4096;
 constexpr int input_limit = 3584;
 constexpr int batch_limit = 128;
+constexpr int embedding_dimensions = 512;
 constexpr size_t text_limit = 64 * 1024;
 constexpr size_t output_limit = 1024 * 1024;
 constexpr int eog = 1, length = 2, cancelled = 3, deadline = 4;
@@ -106,6 +107,7 @@ struct Owner {
     int maximum = 0;
     int position = 0;
     size_t output_bytes = 0;
+    int embedding_input_limit = 0; // Zero identifies a generative context.
 #ifdef TP1_LLAMA_TEST_HOOKS
     std::atomic<int> pause_phase{0};
     std::atomic<bool> paused{false};
@@ -128,6 +130,7 @@ struct Owner {
         sampler.reset();
         context.reset();
         model.reset();
+        embedding_input_limit = 0;
         phase.store(0);
     }
 };
@@ -198,6 +201,7 @@ std::vector<std::string> chat_contents(JNIEnv * env, jintArray roles, jobjectArr
 
 std::string format(Owner & value, const std::string & system, const std::vector<std::string> & contents) {
     if (!value.model) throw std::runtime_error("No model loaded");
+    if (value.embedding_input_limit != 0) throw std::invalid_argument("Embedding models do not accept chat requests");
     const char * tmpl = llama_model_chat_template(value.model.get(), nullptr);
     if (tmpl == nullptr) throw std::runtime_error("Model has no chat template");
     std::vector<llama_chat_message> messages;
@@ -216,13 +220,13 @@ std::string format(Owner & value, const std::string & system, const std::vector<
     return std::string(result.data(), static_cast<size_t>(count));
 }
 
-std::vector<llama_token> tokenize(const llama_vocab * vocab, const std::string & prompt) {
-    const int needed = llama_tokenize(vocab, prompt.data(), static_cast<int32_t>(prompt.size()), nullptr, 0, true, true);
+std::vector<llama_token> tokenize(const llama_vocab * vocab, const std::string & prompt, bool parse_special = true) {
+    const int needed = llama_tokenize(vocab, prompt.data(), static_cast<int32_t>(prompt.size()), nullptr, 0, true, parse_special);
     if (needed == std::numeric_limits<int32_t>::min()) throw std::invalid_argument("Tokenization overflow");
     if (needed >= 0 || -needed > static_cast<int>(text_limit + 4096)) throw std::invalid_argument("Invalid tokenization capacity");
     std::vector<llama_token> tokens(static_cast<size_t>(-needed));
     const int count = llama_tokenize(
-        vocab, prompt.data(), static_cast<int32_t>(prompt.size()), tokens.data(), static_cast<int32_t>(tokens.size()), true, true
+        vocab, prompt.data(), static_cast<int32_t>(prompt.size()), tokens.data(), static_cast<int32_t>(tokens.size()), true, parse_special
     );
     if (count <= 0 || count > static_cast<int>(tokens.size())) throw std::runtime_error("Tokenization retry failed");
     tokens.resize(static_cast<size_t>(count));
@@ -238,9 +242,9 @@ int validate_bos(Owner & value, const llama_vocab * vocab, const std::vector<lla
 }
 
 struct Batch {
-    llama_batch value = llama_batch_init(batch_limit, 0, 1);
+    llama_batch value;
     ~Batch() { llama_batch_free(value); }
-    Batch() = default;
+    explicit Batch(int capacity = batch_limit) : value(llama_batch_init(capacity, 0, 1)) {}
     Batch(const Batch &) = delete;
     Batch & operator=(const Batch &) = delete;
     void token(int index, llama_token id, int position, bool logits) {
@@ -277,52 +281,182 @@ void destroy(JNIEnv * env, jobject, jlong handle) {
     boundary(env, [&] { delete &owner(handle); });
 }
 
+bool load_model(Owner & value, const std::string & name, int threads, ModelProfile profile, int embedding_tokens) {
+    if (value.model || value.context) throw std::runtime_error("Model already loaded");
+    if (threads < 1 || threads > 4) throw std::invalid_argument("Invalid inference thread count");
+    value.phase.store(1);
+    value.expires = Clock::time_point::max();
+    PhaseReset phase{value};
+    if (value.stop.load()) return false;
+    static std::once_flag initialized;
+    std::call_once(initialized, llama_backend_init);
+    auto params = llama_model_default_params();
+    params.n_gpu_layers = 0;
+    params.load_mode = LLAMA_LOAD_MODE_MMAP;
+    params.progress_callback = load_progress;
+    params.progress_callback_user_data = &value;
+    Model model(llama_model_load_from_file(name.c_str(), params), llama_model_free);
+    if (value.stop.load()) return false;
+    if (!model) throw std::runtime_error("GGUF model load failed");
+    if (embedding_tokens != 0) {
+        char architecture[32]{};
+        llama_model_meta_val_str(model.get(), "general.architecture", architecture, sizeof(architecture));
+        const auto * vocab = llama_model_get_vocab(model.get());
+        if (std::string(architecture) != "eurobert" || llama_model_n_embd_out(model.get()) != 768 ||
+                llama_model_n_ctx_train(model.get()) < embedding_tokens ||
+                llama_vocab_get_add_bos(vocab) || !llama_vocab_get_add_eos(vocab)) {
+            throw std::runtime_error("Model does not match the Jina retrieval embedding contract");
+        }
+    }
+    auto ctx_params = llama_context_default_params();
+    ctx_params.n_ctx = embedding_tokens != 0 ? embedding_tokens : context_limit;
+    ctx_params.n_batch = ctx_params.n_ubatch = embedding_tokens != 0 ? embedding_tokens : batch_limit;
+    if (embedding_tokens != 0) {
+        ctx_params.embeddings = true;
+        ctx_params.pooling_type = LLAMA_POOLING_TYPE_LAST;
+        ctx_params.attention_type = LLAMA_ATTENTION_TYPE_NON_CAUSAL;
+    }
+    ctx_params.n_seq_max = 1;
+    ctx_params.n_threads = ctx_params.n_threads_batch = threads;
+    ctx_params.offload_kqv = false;
+    ctx_params.op_offload = false;
+    ctx_params.abort_callback = abort_decode;
+    ctx_params.abort_callback_data = &value;
+    Context context(llama_init_from_model(model.get(), ctx_params), llama_free);
+    if (value.stop.load()) return false;
+    if (!context) throw std::runtime_error("Model context initialization failed");
+    value.model = std::move(model);
+    value.context = std::move(context);
+    value.threads = threads;
+    value.profile = profile;
+    value.embedding_input_limit = embedding_tokens;
+    return true;
+}
+
 jboolean load(JNIEnv * env, jobject, jlong handle, jbyteArray path, jint threads,
               jfloat temperature, jint top_k, jfloat repetition_penalty, jint repetition_window,
               jfloat frequency_penalty, jfloat presence_penalty, jboolean require_single_leading_bos) {
     return boundary(env, [&]() -> jboolean {
-        auto & value = owner(handle);
-        if (value.model || value.context) throw std::runtime_error("Model already loaded");
-        if (threads < 1 || threads > 4) throw std::invalid_argument("Invalid inference thread count");
         if (!std::isfinite(temperature) || temperature < 0 || top_k < 1 ||
                 !std::isfinite(repetition_penalty) || repetition_penalty <= 0 ||
                 repetition_window < 0 || repetition_window > context_limit ||
                 !std::isfinite(frequency_penalty) || !std::isfinite(presence_penalty)) {
             throw std::invalid_argument("Invalid model sampling profile");
         }
-        const auto name = bytes(env, path, 4096);
-        value.phase.store(1);
+        return load_model(owner(handle), bytes(env, path, 4096), threads,
+            {temperature, top_k, repetition_penalty, repetition_window, frequency_penalty,
+                presence_penalty, require_single_leading_bos == JNI_TRUE}, 0) ? JNI_TRUE : JNI_FALSE;
+    });
+}
+
+jboolean load_embedding(JNIEnv * env, jobject, jlong handle, jbyteArray path, jint threads, jint max_tokens) {
+    return boundary(env, [&]() -> jboolean {
+        if (max_tokens < 1 || max_tokens > 8192) throw std::invalid_argument("Invalid embedding token limit");
+        return load_model(owner(handle), bytes(env, path, 4096), threads, {}, max_tokens) ? JNI_TRUE : JNI_FALSE;
+    });
+}
+
+std::vector<llama_token> embedding_tokens(Owner & value, const std::string & prompt, bool enforce_limit = true) {
+    if (!value.context || value.embedding_input_limit == 0) throw std::invalid_argument("No embedding model loaded");
+    if (prompt.compare(0, 10, "Document: ") != 0 && prompt.compare(0, 7, "Query: ") != 0) {
+        throw std::invalid_argument("Missing retrieval input prefix");
+    }
+    const auto * vocab = llama_model_get_vocab(value.model.get());
+    // Treat token-looking document content as text; only the tokenizer may append EOS.
+    auto tokens = tokenize(vocab, prompt, false);
+    if (enforce_limit && (tokens.size() > static_cast<size_t>(value.embedding_input_limit) ||
+            tokens.size() > llama_n_batch(value.context.get()) || tokens.size() > llama_n_ubatch(value.context.get()) ||
+            tokens.size() > llama_n_ctx_seq(value.context.get()))) {
+        throw std::invalid_argument("Embedding input exceeds token limit, including prefix and EOS");
+    }
+    if (tokens.back() != llama_vocab_eos(vocab) ||
+            std::count(tokens.begin(), tokens.end(), llama_vocab_eos(vocab)) != 1 ||
+            std::count(tokens.begin(), tokens.end(), llama_vocab_bos(vocab)) != 0) {
+        throw std::runtime_error("Embedding tokenizer must append exactly one EOS and no BOS");
+    }
+    return tokens;
+}
+
+void check_embedding_stop(JNIEnv * env, const Owner & value) {
+    const auto status = value.stopped();
+    if (status == 0) return;
+    throw_java(env, status == cancelled ? "java/util/concurrent/CancellationException" : "java/io/InterruptedIOException",
+        status == cancelled ? "Embedding cancelled" : "Embedding deadline exceeded");
+    throw PendingException{};
+}
+
+jint count_embedding_tokens(JNIEnv * env, jobject, jlong handle, jbyteArray input) {
+    return boundary(env, [&]() -> jint {
+        auto & value = owner(handle);
         value.expires = Clock::time_point::max();
+        check_embedding_stop(env, value);
+        // Counting must accept over-budget candidates so the chunker can split them before encoding.
+        const auto tokens = embedding_tokens(value, bytes(env, input, text_limit), false);
+        check_embedding_stop(env, value);
+        return static_cast<jint>(tokens.size());
+    });
+}
+
+jfloatArray embed(JNIEnv * env, jobject, jlong handle, jbyteArray input, jlong milliseconds) {
+    return boundary(env, [&] {
+        auto & value = owner(handle);
+        if (milliseconds < 1 || milliseconds > 120000) throw std::invalid_argument("Invalid embedding deadline");
+        auto tokens = embedding_tokens(value, bytes(env, input, text_limit));
+        value.reset();
+        value.expires = Clock::now() + std::chrono::milliseconds(milliseconds);
         PhaseReset phase{value};
-        if (value.stop.load()) return JNI_FALSE;
-        static std::once_flag initialized;
-        std::call_once(initialized, llama_backend_init);
-        auto params = llama_model_default_params();
-        params.n_gpu_layers = 0;
-        params.load_mode = LLAMA_LOAD_MODE_MMAP;
-        params.progress_callback = load_progress;
-        params.progress_callback_user_data = &value;
-        Model model(llama_model_load_from_file(name.c_str(), params), llama_model_free);
-        if (value.stop.load()) return JNI_FALSE;
-        if (!model) throw std::runtime_error("GGUF model load failed");
-        auto ctx_params = llama_context_default_params();
-        ctx_params.n_ctx = context_limit;
-        ctx_params.n_batch = ctx_params.n_ubatch = batch_limit;
-        ctx_params.n_seq_max = 1;
-        ctx_params.n_threads = ctx_params.n_threads_batch = threads;
-        ctx_params.offload_kqv = false;
-        ctx_params.op_offload = false;
-        ctx_params.abort_callback = abort_decode;
-        ctx_params.abort_callback_data = &value;
-        Context context(llama_init_from_model(model.get(), ctx_params), llama_free);
-        if (value.stop.load()) return JNI_FALSE;
-        if (!context) throw std::runtime_error("Model context initialization failed");
-        value.model = std::move(model);
-        value.context = std::move(context);
-        value.threads = threads;
-        value.profile = {temperature, top_k, repetition_penalty, repetition_window,
-            frequency_penalty, presence_penalty, require_single_leading_bos == JNI_TRUE};
-        return JNI_TRUE;
+        check_embedding_stop(env, value);
+        Batch batch(static_cast<int>(tokens.size()));
+        batch.value.n_tokens = static_cast<int32_t>(tokens.size());
+        for (size_t index = 0; index < tokens.size(); ++index) {
+            batch.token(static_cast<int>(index), tokens[index], static_cast<int>(index), true);
+        }
+        value.phase.store(2);
+        checkpoint(value);
+        check_embedding_stop(env, value);
+        int result;
+#ifdef TP1_LLAMA_TEST_HOOKS
+        if (value.fail_decode) {
+            value.fail_decode = false;
+            result = -2;
+        } else
+#endif
+        { result = llama_encode(value.context.get(), batch.value); }
+        check_embedding_stop(env, value);
+        if (result != 0) throw std::runtime_error("llama_encode failed without a requested cancellation");
+        const auto * pooled = llama_get_embeddings_seq(value.context.get(), 0);
+        check_embedding_stop(env, value);
+        if (pooled == nullptr) throw std::runtime_error("Missing pooled embedding");
+        // Matryoshka reduction: slice first, then normalize the retained coordinates.
+        double squared_norm = 0;
+        for (int index = 0; index < embedding_dimensions; ++index) {
+            if (!std::isfinite(pooled[index])) throw std::runtime_error("Non-finite embedding");
+            squared_norm += static_cast<double>(pooled[index]) * pooled[index];
+        }
+        if (!(squared_norm > 0) || !std::isfinite(squared_norm)) throw std::runtime_error("Invalid embedding norm");
+        const auto norm = std::sqrt(squared_norm);
+        std::vector<jfloat> normalized(embedding_dimensions);
+        for (int index = 0; index < embedding_dimensions; ++index) normalized[index] = pooled[index] / norm;
+        auto output = env->NewFloatArray(embedding_dimensions);
+        check_java(env);
+        if (output == nullptr) throw std::bad_alloc();
+        env->SetFloatArrayRegion(output, 0, embedding_dimensions, normalized.data());
+        check_java(env);
+        check_embedding_stop(env, value);
+        return output;
+    });
+}
+
+jintArray test_embedding_tokens(JNIEnv * env, jobject, jlong handle, jbyteArray input) {
+    return boundary(env, [&]() -> jintArray {
+#ifdef TP1_LLAMA_TEST_HOOKS
+        const auto tokens = embedding_tokens(owner(handle), bytes(env, input, text_limit));
+        return int_array(env, std::vector<jint>(tokens.begin(), tokens.end()));
+#else
+        (void) handle;
+        (void) input;
+        throw std::runtime_error("Native test controls are disabled in ordinary release");
+#endif
     });
 }
 
@@ -493,6 +627,10 @@ JNINativeMethod methods[] = {
     METHOD("createNative", "()J", create),
     METHOD("destroyNative", "(J)V", destroy),
     METHOD("loadNative", "(J[BIFIFIFFZ)Z", load),
+    METHOD("loadEmbeddingNative", "(J[BII)Z", load_embedding),
+    METHOD("embedNative", "(J[BJ)[F", embed),
+    METHOD("countEmbeddingTokensNative", "(J[B)I", count_embedding_tokens),
+    METHOD("testEmbeddingTokensNative", "(J[B)[I", test_embedding_tokens),
     METHOD("unloadNative", "(J)V", unload),
     METHOD("formatNative", "(J[B[I[[B)[B", format_prompt),
     METHOD("tokenCountNative", "(J[B[I[[B)I", token_count),

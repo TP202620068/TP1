@@ -9,14 +9,18 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.buffer
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlin.coroutines.resumeWithException
@@ -39,7 +43,13 @@ internal class LlamaEngine(private val models: ModelManager) {
     private val worker = Executors.newSingleThreadExecutor { runnable -> Thread(runnable, "TP1-inference") }
     private var handle = createNative()
     private var request: Any? = null
-    private class Delivery { val stopped = AtomicBoolean(false) }
+    private class Delivery(private val job: Job? = null) {
+        val stopped = AtomicBoolean(false)
+        fun stop() {
+            stopped.set(true)
+            job?.cancel(CancellationException("Embedding cancelled"))
+        }
+    }
     private var delivery: Delivery? = null
     private var closing: CompletableDeferred<Unit>? = null
     private var model: ParcelFileDescriptor? = null // Worker-owned, released after native unload.
@@ -48,7 +58,14 @@ internal class LlamaEngine(private val models: ModelManager) {
     // 0 idle, 1 native load, 2 prefill, 3 decode. Diagnostic only, not a synchronization primitive.
     val phase: Int get() = synchronized(lock) { if (handle == 0L) 0 else phaseNative(handle) }
 
-    suspend fun load(selected: Model = Model.Test) {
+    suspend fun load(selected: Model = Model.Test) = loadModel(selected, embeddingTokens = null)
+
+    suspend fun loadEmbedding(maxInputTokens: Int) {
+        require(maxInputTokens in 1..8192)
+        loadModel(Model.JinaV5NanoRetrieval, maxInputTokens)
+    }
+
+    private suspend fun loadModel(selected: Model, embeddingTokens: Int?) {
         val coroutine = currentCoroutineContext()
         operation(onCancelled = ::releaseModel) { owner ->
             check(model == null) { "Model already loaded" }
@@ -56,20 +73,60 @@ internal class LlamaEngine(private val models: ModelManager) {
             memoryPermit = true
             try {
                 val profile = models.profile(selected)
-                val sampling = profile.sampling
+                require((profile.sampling == null) == (embeddingTokens != null)) { "Wrong model kind for this operation" }
                 model = models.open(selected, coroutine) { cancelledNative(owner) }
                 val fd = checkNotNull(model).fd
-                if (!loadNative(owner, "/proc/self/fd/$fd".toByteArray(Charsets.UTF_8),
-                        Runtime.getRuntime().availableProcessors().coerceIn(1, 4),
+                val path = "/proc/self/fd/$fd".toByteArray(Charsets.UTF_8)
+                val threads = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+                val loaded = if (embeddingTokens != null) loadEmbeddingNative(owner, path, threads, embeddingTokens)
+                else {
+                    val sampling = requireNotNull(profile.sampling)
+                    loadNative(owner, path, threads,
                         sampling.temperature, sampling.topK, sampling.repetitionPenalty, sampling.repetitionWindow,
-                        sampling.frequencyPenalty, sampling.presencePenalty, profile.requireSingleLeadingBos)) {
-                    throw CancellationException("Model loading cancelled")
+                        sampling.frequencyPenalty, sampling.presencePenalty, profile.requireSingleLeadingBos)
                 }
+                if (!loaded) throw CancellationException("Model loading cancelled")
             } catch (error: Throwable) {
                 releaseModel(owner)
                 throw error
             }
         }
+    }
+
+    suspend fun embed(input: ByteArray): FloatArray = embeddingRequest { current ->
+        operation(current) { owner ->
+            check(model != null) { "No verified model loaded" }
+            embedNative(owner, input, 120_000)
+        }
+    }
+
+    suspend fun countEmbeddingTokens(input: ByteArray): Int = withEmbeddingTokenCounter { count -> count(input) }
+
+    /** Keeps one reservation across preprocessing, multiple worker counts, and result delivery. */
+    suspend fun <T> withEmbeddingTokenCounter(block: suspend (suspend (ByteArray) -> Int) -> T): T = embeddingRequest { current ->
+        block { input ->
+            operation(current) { owner ->
+                check(model != null) { "No verified model loaded" }
+                countEmbeddingTokensNative(owner, input)
+            }
+        }
+    }
+
+    private suspend fun <T> embeddingRequest(block: suspend (Delivery) -> T): T = coroutineScope {
+        currentCoroutineContext().ensureActive()
+        // Cancel only this call's child job, never the caller's parent job.
+        val current = Delivery(currentCoroutineContext().job)
+        synchronized(lock) {
+            check(closing == null && request == null && delivery == null) { "Engine closed or busy" }
+            delivery = current
+        }
+        try {
+            val result = block(current)
+            synchronized(lock) {
+                if (current.stopped.get()) throw CancellationException("Embedding delivery cancelled")
+            }
+            result
+        } finally { synchronized(lock) { if (delivery === current) delivery = null } }
     }
 
     /** No chat history is retained. Recollection is a new explicit request. Concurrent work is rejected. */
@@ -150,7 +207,7 @@ internal class LlamaEngine(private val models: ModelManager) {
     }
 
     fun cancel() = synchronized(lock) {
-        delivery?.stopped?.set(true)
+        delivery?.stop()
         if (request != null && handle != 0L) cancelNative(handle)
     }
 
@@ -161,6 +218,9 @@ internal class LlamaEngine(private val models: ModelManager) {
     }
     val testPaused: Boolean get() = synchronized(lock) { handle != 0L && testPausedNative(handle) }
 
+    /** Tokenizer assertions only; disabled in ordinary release. */
+    suspend fun testEmbeddingTokens(input: ByteArray): IntArray = operation { testEmbeddingTokensNative(it, input) }
+
     suspend fun reset() = operation { resetNative(it) }
     suspend fun unload() = operation { releaseModel(it) }
 
@@ -169,7 +229,7 @@ internal class LlamaEngine(private val models: ModelManager) {
         closing?.let { return@synchronized it }
         val done = CompletableDeferred<Unit>()
         closing = done
-        delivery?.stopped?.set(true)
+        delivery?.stop()
         cancelNative(handle)
         worker.execute {
             try {
@@ -272,6 +332,10 @@ internal class LlamaEngine(private val models: ModelManager) {
     private external fun loadNative(owner: Long, path: ByteArray, threads: Int,
                                     temperature: Float, topK: Int, repetitionPenalty: Float, repetitionWindow: Int,
                                     frequencyPenalty: Float, presencePenalty: Float, requireSingleLeadingBos: Boolean): Boolean
+    private external fun loadEmbeddingNative(owner: Long, path: ByteArray, threads: Int, maxInputTokens: Int): Boolean
+    private external fun embedNative(owner: Long, input: ByteArray, deadlineMillis: Long): FloatArray
+    private external fun countEmbeddingTokensNative(owner: Long, input: ByteArray): Int
+    private external fun testEmbeddingTokensNative(owner: Long, input: ByteArray): IntArray
     private external fun unloadNative(owner: Long)
     private external fun formatNative(owner: Long, system: ByteArray, roles: IntArray, contents: Array<ByteArray>): ByteArray
     private external fun tokenCountNative(owner: Long, system: ByteArray, roles: IntArray, contents: Array<ByteArray>): Int

@@ -13,6 +13,9 @@ import android.util.AtomicFile
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.browser.DocumentBrowser
+import com.example.tp1.inference.EmbeddingSession
+import com.example.tp1.inference.ManualInference
+import com.example.tp1.inference.ModelManager
 import com.example.tp1.sources.SelectedSource
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourceStore
@@ -146,6 +149,28 @@ class DocumentExtractorTest {
         assertEquals(2L, error.pageCount)
         assertArrayEquals(longArrayOf(2), error.ocrPages)
         assertNull(ExtractionArtifacts.current(context, source, entry))
+    }
+
+    @Test @ManualInference fun extractedMarkdownChunksAndEmbedsWithExactTokenReport() = runBlocking<Unit> {
+        val rtf = "{\\rtf1\\ansi " +
+            "The laptop warranty lasts two years from purchase. Keep the receipt for repairs.\\par ".repeat(30) + "}"
+        configure(rtf.toByteArray(), "chunking.rtf", "application/rtf")
+        val artifact = DocumentExtractor(context).extract(source, entry)
+        val markdown = artifact.markdown.readText(Charsets.UTF_8)
+        assertTrue(markdown.contains("warranty"))
+        val session = EmbeddingSession.open(ModelManager(context))
+        try {
+            val chunks = session.chunkDocument(markdown)
+            assertTrue(chunks.size > 1)
+            reportChunkTokens("anydoc-rtf", chunks, session.maxInputTokens)
+            for (chunk in chunks) {
+                assertEquals(session.countDocumentTokens(chunk.text), chunk.inputTokens)
+                assertTrue(chunk.inputTokens <= session.maxInputTokens)
+                val vector = session.embedDocument(chunk.text)
+                assertEquals(512, vector.size)
+                assertEquals(1.0, vector.sumOf { it.toDouble() * it }, 1e-5)
+            }
+        } finally { session.close() }
     }
 
     @Test fun actualByteLimitsIgnoreUnknownAndIncorrectProviderSizes() = runBlocking<Unit> {

@@ -5,7 +5,7 @@ import org.junit.Test
 
 class ModelProfileTest {
     @Test fun samplingRejectsInvalidNumbersAndUnboundedHistoryButAllowsGreedy() {
-        val sampling = Model.Test.profile.sampling
+        val sampling = requireNotNull(Model.Test.profile.sampling)
         val invalid = listOf<() -> ModelSampling>(
             { sampling.copy(temperature = Float.NaN) }, { sampling.copy(temperature = -1f) },
             { sampling.copy(temperature = Float.POSITIVE_INFINITY) }, { sampling.copy(topK = 0) },

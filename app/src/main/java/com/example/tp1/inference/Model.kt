@@ -1,18 +1,23 @@
 package com.example.tp1.inference
 
 import com.example.tp1.inference.models.Lfm25_230M
+import com.example.tp1.inference.models.JinaV5NanoRetrieval as JinaRetrieval
 import java.net.URL
 
 internal enum class Model(internal val profile: ModelProfile) {
-    Test(Lfm25_230M.profile)
+    Test(Lfm25_230M.profile),
+    JinaV5NanoRetrieval(JinaRetrieval.profile)
 }
 
 /** Model-specific choices. Runtime resource/request limits remain shared engine policy. */
 internal data class ModelProfile(
     val artifact: ModelArtifact,
-    val sampling: ModelSampling,
-    val requireSingleLeadingBos: Boolean
-)
+    /** Null for an embedding model; generation always requires sampling settings. */
+    val sampling: ModelSampling? = null,
+    val requireSingleLeadingBos: Boolean = false
+) {
+    init { require(sampling != null || !requireSingleLeadingBos) }
+}
 
 internal data class ModelSampling(
     val temperature: Float,

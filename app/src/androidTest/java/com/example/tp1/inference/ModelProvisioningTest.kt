@@ -16,9 +16,10 @@ class ModelProvisioningTest {
         }
         val input = File(path).canonicalFile
         require(input.parentFile == context.cacheDir.canonicalFile) { "Input must be a direct target-app cache file" }
-        val destination = ModelManager(context).location(Model.Test)
-        input.inputStream().use { ModelFile.provision(destination, Model.Test.profile.artifact, it) { } }
-        assertEquals(Model.Test.profile.artifact.bytes, destination.length())
+        val model = InstrumentationRegistry.getArguments().getString("tp1.model")?.let(Model::valueOf) ?: Model.Test
+        val destination = ModelManager(context).location(model)
+        input.inputStream().use { ModelFile.provision(destination, model.profile.artifact, it) { } }
+        assertEquals(model.profile.artifact.bytes, destination.length())
         assertTrue("Remove staging input after successful publication", input.delete())
     }
 }

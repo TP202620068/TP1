@@ -175,7 +175,7 @@ class InferenceSessionTest {
             assertTrue(end.detail!!.contains("requires exactly one leading BOS"))
         } finally { strict.closeAsync().await() }
 
-        val defaults = Model.Test.profile.sampling
+        val defaults = requireNotNull(Model.Test.profile.sampling)
         // Exercise temperature and top-k independently instead of enabling both greedy controls together.
         for (sampling in listOf(defaults.copy(temperature = 0f), defaults.copy(topK = 1))) {
             val profile = Model.Test.profile.copy(sampling = sampling, requireSingleLeadingBos = false)
