@@ -1,6 +1,7 @@
 package com.example.tp1.chat
 
 import android.app.Application
+import android.os.SystemClock
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
@@ -17,6 +18,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -27,6 +29,7 @@ import kotlinx.coroutines.withContext
 
 // Saved state stores UTF-16; keep its size bounded independently of the UTF-8 request budget.
 private const val MAX_DRAFT_LENGTH = 64 * 1024
+private const val BACKGROUND_TIMEOUT_MILLIS = 120_000L
 
 /** Concrete function seam for deterministic owner/UI checks without loading weights. */
 internal class ChatConnection(
@@ -40,7 +43,8 @@ internal class ChatViewModel(
     application: Application,
     private val savedState: SavedStateHandle,
     private val downloadModel: suspend () -> Unit,
-    private val openModel: suspend () -> ChatConnection
+    private val openModel: suspend () -> ChatConnection,
+    private val elapsedRealtime: () -> Long = { SystemClock.elapsedRealtime() }
 ) : AndroidViewModel(application) {
     constructor(application: Application, savedState: SavedStateHandle) : this(application, savedState,
         downloadModel = { ModelManager(application).download(Model.Test) },
@@ -60,6 +64,8 @@ internal class ChatViewModel(
     val state = mutableState.asStateFlow()
     private var connection: ChatConnection? = null
     private var operation: Job? = null
+    private var unloadJob: Job? = null
+    private var backgroundedAt: Long? = null
     private var epoch = 0L
     private var nextTurn = 0L
     private var foreground = false
@@ -88,7 +94,22 @@ internal class ChatViewModel(
     fun setForeground(value: Boolean) {
         if (foreground == value) return
         foreground = value
-        if (!foreground) release() else if (selected) prepare()
+        unloadJob?.cancel()
+        unloadJob = null
+        if (foreground) {
+            // Elapsed time includes device sleep, unlike the scheduled delay.
+            val expired = backgroundedAt?.let { elapsedRealtime() - it >= BACKGROUND_TIMEOUT_MILLIS } == true
+            backgroundedAt = null
+            if (expired) release()
+            if (selected) prepare()
+        } else {
+            backgroundedAt = elapsedRealtime()
+            stop()
+            unloadJob = viewModelScope.launch {
+                delay(BACKGROUND_TIMEOUT_MILLIS)
+                release()
+            }
+        }
     }
 
     fun prepare() {
@@ -100,11 +121,11 @@ internal class ChatViewModel(
             try {
                 downloadModel()
                 currentCoroutineContext().ensureActive()
-                if (ticket != epoch || !foreground) throw CancellationException()
+                if (ticket != epoch) throw CancellationException()
                 mutableState.value = state.value.copy(preparation = ChatPreparation.Loading)
                 opened = openModel()
                 currentCoroutineContext().ensureActive()
-                if (ticket != epoch || !foreground) throw CancellationException()
+                if (ticket != epoch) throw CancellationException()
                 connection = opened
                 opened = null
                 mutableState.value = state.value.copy(preparation = ChatPreparation.Ready)
@@ -170,7 +191,7 @@ internal class ChatViewModel(
                 check(finished) { "Stream ended without terminal status" }
             } catch (error: CancellationException) {
                 if (ticket == epoch) accepted?.let { id -> updateTurn(id) {
-                    it.copy(running = false, finish = FinishReason.CANCELLED)
+                    if (it.running) it.copy(running = false, finish = FinishReason.CANCELLED) else it
                 } }
                 throw error
             } catch (error: Exception) {
@@ -237,6 +258,7 @@ internal class ChatViewModel(
 
     override fun onCleared() {
         ++epoch
+        unloadJob?.cancel()
         connection?.closeAsync()
         connection = null
         operation?.cancel()

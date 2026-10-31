@@ -117,24 +117,26 @@ private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Mod
                 SelectionContainer { Text(turn.input, style = MaterialTheme.typography.bodyLarge) }
             }
         }
-        Column(modifier = Modifier.semantics { contentDescription = assistantLabel },
-            verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            if (turn.answer.isNotEmpty()) SelectionContainer {
-                Text(turn.answer, style = MaterialTheme.typography.bodyLarge)
+        Surface(color = MaterialTheme.colorScheme.surfaceContainer, shape = MaterialTheme.shapes.large,
+            modifier = Modifier.fillMaxWidth(0.9f).semantics { contentDescription = assistantLabel }) {
+            Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                if (turn.answer.isNotEmpty()) SelectionContainer {
+                    Text(turn.answer, style = MaterialTheme.typography.bodyLarge)
+                }
+                if (turn.running && turn.answer.isEmpty()) TypingIndicator(Modifier.padding(4.dp))
+                val status = when {
+                    turn.failed -> R.string.chat_response_error
+                    turn.finish == FinishReason.LENGTH -> R.string.chat_length
+                    turn.finish == FinishReason.CANCELLED -> R.string.chat_cancelled
+                    turn.finish == FinishReason.DEADLINE -> R.string.chat_deadline
+                    turn.finish == FinishReason.NATIVE_FAILURE -> R.string.chat_response_error
+                    else -> null
+                }
+                if (status != null) Text(stringResource(status), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
+                if (turn.canRetry && retryEnabled) TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
             }
-            if (turn.running) TypingIndicator(Modifier.padding(4.dp))
-            val status = when {
-                turn.failed -> R.string.chat_response_error
-                turn.finish == FinishReason.LENGTH -> R.string.chat_length
-                turn.finish == FinishReason.CANCELLED -> R.string.chat_cancelled
-                turn.finish == FinishReason.DEADLINE -> R.string.chat_deadline
-                turn.finish == FinishReason.NATIVE_FAILURE -> R.string.chat_response_error
-                else -> null
-            }
-            if (status != null) Text(stringResource(status), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
-            if (turn.canRetry && retryEnabled) TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
         }
     }
 }

@@ -181,7 +181,7 @@ class ChatInteractionTest {
         compose.onNodeWithContentDescription("Asistente").assertIsDisplayed()
         compose.runOnIdle { firstText.complete(Unit) }
         compose.onNodeWithText("Hola").assertIsDisplayed()
-        generating.assertIsDisplayed()
+        generating.assertDoesNotExist()
         compose.onNodeWithContentDescription("Detener respuesta").assertIsEnabled()
         compose.runOnIdle { chat.send(); assertTrue(chat.state.value.turns.single().running) }
         compose.onNodeWithContentDescription("Tu pregunta").performTextInput("Segunda pregunta")
@@ -294,17 +294,20 @@ class ChatInteractionTest {
         } finally { gate.complete(Unit) }
     }
 
-    @Test fun backgroundAndFinalOwnerClearReleaseResourcesWithoutLosingTranscript() {
+    @Test fun briefBackgroundRetainsModelAndFinalOwnerClearReleasesIt() {
         streams += complete("Respuesta guardada")
         show()
         awaitReady()
         send("Hola")
         compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle && chat.state.value.turns.isNotEmpty() }
         compose.runOnIdle { chat.setForeground(false) }
-        compose.waitUntil(5_000) { chat.state.value.preparation == ChatPreparation.Unprepared }
-        compose.runOnIdle { assertEquals(1, closed); chat.setForeground(true) }
+        compose.runOnIdle {
+            assertEquals(ChatPreparation.Ready, chat.state.value.preparation)
+            assertEquals(0, closed)
+            chat.setForeground(true)
+        }
         awaitReady()
-        compose.runOnIdle { store.clear(); assertEquals(2, closed); assertEquals("Respuesta guardada", chat.state.value.turns.single().answer) }
+        compose.runOnIdle { store.clear(); assertEquals(1, closed); assertEquals("Respuesta guardada", chat.state.value.turns.single().answer) }
     }
 
     @Test fun backgroundDuringGenerationSuppressesLateOutputAndWaitsForCleanup() {
@@ -323,22 +326,51 @@ class ChatInteractionTest {
             compose.onNodeWithText("Parcial visible").assertIsDisplayed()
             compose.runOnIdle { chat.setForeground(false); chat.setSelected(false) }
             compose.runOnIdle {
-                assertEquals(ChatPreparation.Closing, chat.state.value.preparation)
+                assertEquals(ChatPreparation.Ready, chat.state.value.preparation)
                 assertEquals(ChatPhase.Stopping, chat.state.value.phase)
                 chat.setForeground(true)
                 chat.setSelected(true)
                 chat.prepare()
-                assertEquals(ChatPreparation.Closing, chat.state.value.preparation)
+                assertEquals(ChatPhase.Stopping, chat.state.value.phase)
+                assertEquals(0, closed)
                 assertEquals(1, opened)
             }
             cleanup.complete(Unit)
-            awaitReady()
+            compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
             compose.runOnIdle {
                 assertEquals("Parcial visible", chat.state.value.turns.single().answer)
                 assertEquals(FinishReason.CANCELLED, chat.state.value.turns.single().finish)
                 assertTrue(chat.state.value.turns.replayMessages().isEmpty())
-                assertEquals(1, closed)
-                assertEquals(2, opened)
+                assertEquals(0, closed)
+                assertEquals(1, opened)
+            }
+        } finally { cleanup.complete(Unit) }
+    }
+
+    @Test fun backgroundDuringCompletedStreamCleanupPreservesAnswerForReplay() {
+        val cleanup = CompletableDeferred<Unit>()
+        streams += flow {
+            try {
+                emit(GenerationEvent.Text("Respuesta completa"))
+                emit(GenerationEvent.Finished(FinishReason.EOG, 2))
+                awaitCancellation()
+            } finally { withContext(NonCancellable) { cleanup.await() } }
+        }
+        try {
+            show()
+            awaitReady()
+            send("Hola")
+            compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.finish == FinishReason.EOG }
+            compose.runOnIdle {
+                assertEquals(ChatPhase.Generating, chat.state.value.phase)
+                chat.setForeground(false)
+            }
+            compose.runOnIdle { assertEquals(ChatPhase.Stopping, chat.state.value.phase) }
+            cleanup.complete(Unit)
+            compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
+            compose.runOnIdle {
+                assertEquals(FinishReason.EOG, chat.state.value.turns.single().finish)
+                assertEquals(listOf("Hola", "Respuesta completa"), chat.state.value.turns.replayMessages().map { it.text })
             }
         } finally { cleanup.complete(Unit) }
     }

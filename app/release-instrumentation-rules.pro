@@ -179,7 +179,8 @@
     public static java.lang.Object budgetChatMessages(java.lang.String, java.util.List, java.lang.String, kotlin.jvm.functions.Function2, kotlin.coroutines.Continuation);
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatViewModel {
-    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1);
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0);
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, int, kotlin.jvm.internal.DefaultConstructorMarker);
     public kotlinx.coroutines.flow.StateFlow getState();
     public void editDraft(java.lang.String);
     public void setSelected(boolean);

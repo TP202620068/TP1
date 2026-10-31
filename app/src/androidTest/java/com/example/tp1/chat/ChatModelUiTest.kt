@@ -86,9 +86,10 @@ class ChatModelUiTest {
             assertFalse("Tab switches must retain the model's native memory permit", released)
         }
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
-        compose.waitUntil(60_000) { owner.state.value.preparation == ChatPreparation.Unprepared }
+        assertEquals(ChatPreparation.Ready, owner.state.value.preparation)
+        compose.waitUntil(150_000) { owner.state.value.preparation == ChatPreparation.Unprepared }
         val released = ExtractionArtifacts.permit.tryLock()
         if (released) ExtractionArtifacts.permit.unlock()
-        assertTrue("Backgrounding must release the model's native memory permit", released)
+        assertTrue("Two minutes in background must release the model's native memory permit", released)
     }
 }
