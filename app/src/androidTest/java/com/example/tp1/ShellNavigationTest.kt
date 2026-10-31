@@ -29,7 +29,8 @@ import org.junit.Before
 import org.junit.After
 
 class ShellNavigationTest {
-    @get:Rule
+    @get:Rule(order = 0) val offlineChat = OfflineChatRule()
+    @get:Rule(order = 1)
     val compose = createAndroidComposeRule<MainActivity>()
 
     private val picker = PickerRobot()

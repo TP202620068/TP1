@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.Lifecycle
 import com.example.tp1.MainActivity
 import com.example.tp1.PickerRobot
 import com.example.tp1.awaitSources
@@ -42,7 +43,6 @@ class ChatModelUiTest {
         compose.activityRule.scenario.recreate()
         compose.awaitSources()
         compose.onNode(hasText("Chat") and hasClickAction()).performClick()
-        compose.onNodeWithText("Preparar chat").performClick()
         val owner = ViewModelProvider(compose.activity)[ChatViewModel::class.java]
         compose.waitUntil(60_000) { owner.state.value.preparation == ChatPreparation.Ready }
         compose.onNodeWithContentDescription("Tu pregunta").performTextInput("<|startoftext|> Hola")
@@ -79,9 +79,16 @@ class ChatModelUiTest {
             compose.onNodeWithText("Se agotó el tiempo. La respuesta está incompleta.").assertIsDisplayed()
         }
         compose.onNode(hasText("Explorador") and hasClickAction()).performClick()
+        compose.runOnIdle {
+            assertEquals(ChatPreparation.Ready, owner.state.value.preparation)
+            val released = ExtractionArtifacts.permit.tryLock()
+            if (released) ExtractionArtifacts.permit.unlock()
+            assertFalse("Tab switches must retain the model's native memory permit", released)
+        }
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.waitUntil(60_000) { owner.state.value.preparation == ChatPreparation.Unprepared }
         val released = ExtractionArtifacts.permit.tryLock()
         if (released) ExtractionArtifacts.permit.unlock()
-        assertTrue("Leaving Chat must release the model's native memory permit", released)
+        assertTrue("Backgrounding must release the model's native memory permit", released)
     }
 }

@@ -3,10 +3,14 @@ package com.example.tp1.chat
 import android.app.Application
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -18,6 +22,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
+import androidx.compose.ui.text.AnnotatedString
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
@@ -55,7 +60,7 @@ class ChatInteractionTest {
         cancel = { stopped++ }, closeAsync = { closed++; CompletableDeferred(Unit) })
 
     private fun show(download: suspend () -> Unit = {}, open: suspend () -> ChatConnection = { connection() },
-                     savedState: SavedStateHandle = SavedStateHandle()) {
+                     savedState: SavedStateHandle = SavedStateHandle(), initialTab: AppTab = AppTab.Chat) {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             chat = ChatViewModel(InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application,
                 savedState, download, open)
@@ -65,15 +70,14 @@ class ChatInteractionTest {
         compose.setContent {
             val state by chat.state.collectAsState()
             TP1Theme {
-                TP1App(initialTab = AppTab.Chat, chat = state, onChatSelected = chat::setSelected,
+                TP1App(initialTab = initialTab, chat = state, onChatSelected = chat::setSelected,
                     onChatDraftChange = chat::editDraft, onChatPrepare = chat::prepare,
                     onChatSend = chat::send, onChatStop = chat::stop, onChatRetry = chat::retry)
             }
         }
     }
 
-    private fun prepare() {
-        compose.onNodeWithText("Preparar chat").performClick()
+    private fun awaitReady() {
         compose.waitUntil(5_000) { chat.state.value.preparation == ChatPreparation.Ready }
     }
 
@@ -95,7 +99,7 @@ class ChatInteractionTest {
         val savedState = SavedStateHandle(mapOf("chatDraft" to "Conservar 😀"))
         show(savedState = savedState)
         compose.onNodeWithContentDescription("Tu pregunta").performTextInput("x".repeat(1024 * 1024))
-        prepare()
+        awaitReady()
         compose.runOnIdle {
             assertEquals(ChatProblem.InvalidInput, chat.state.value.problem)
             assertEquals("Conservar 😀", chat.state.value.draft)
@@ -153,8 +157,10 @@ class ChatInteractionTest {
     }
 
     @Test fun streamsBeforeCompletionRejectsDuplicateSendAndReplaysPriorTurn() {
+        val firstText = CompletableDeferred<Unit>()
         val finish = CompletableDeferred<Unit>()
         streams += flow {
+            firstText.await()
             emit(GenerationEvent.Text("Hola"))
             finish.await()
             emit(GenerationEvent.Text(" mundo"))
@@ -163,15 +169,26 @@ class ChatInteractionTest {
         streams += complete("Segunda respuesta")
         show()
         compose.onNodeWithContentDescription("Enviar pregunta").assertIsNotEnabled()
-        prepare()
-        send("Primera pregunta")
+        awaitReady()
+        compose.onNodeWithText("Chat listo").assertDoesNotExist()
+        send("   Primera pregunta   ")
+        compose.onNodeWithText("Primera pregunta").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Tu pregunta").assert(
+            SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
+        val generating = compose.onNodeWithContentDescription("Generando respuesta…")
+        generating.assertIsDisplayed()
+        compose.onNodeWithText("Asistente").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Asistente").assertIsDisplayed()
+        compose.runOnIdle { firstText.complete(Unit) }
         compose.onNodeWithText("Hola").assertIsDisplayed()
+        generating.assertIsDisplayed()
         compose.onNodeWithContentDescription("Detener respuesta").assertIsEnabled()
         compose.runOnIdle { chat.send(); assertTrue(chat.state.value.turns.single().running) }
         compose.onNodeWithContentDescription("Tu pregunta").performTextInput("Segunda pregunta")
         compose.runOnIdle { finish.complete(Unit) }
         compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
         compose.onNodeWithText("Hola mundo").assertIsDisplayed()
+        generating.assertDoesNotExist()
         compose.onNodeWithContentDescription("Enviar pregunta").performClick()
         compose.waitUntil(5_000) { chat.state.value.turns.size == 2 && chat.state.value.phase == ChatPhase.Idle }
         compose.runOnIdle {
@@ -189,7 +206,7 @@ class ChatInteractionTest {
         streams += complete("Respuesta completa")
         try {
             show()
-            prepare()
+            awaitReady()
             send("Pregunta original")
             compose.onNodeWithText("Respuesta parcial").assertIsDisplayed()
             compose.onNodeWithContentDescription("Detener respuesta").performClick()
@@ -214,19 +231,22 @@ class ChatInteractionTest {
                 if (reject) throw IllegalArgumentException("Fixture token limit")
                 budgetChatMessages(CHAT_SYSTEM_PROMPT, history, text) { 100 }
             } })
-        compose.onNodeWithContentDescription("Tu pregunta").performTextInput("Conservar borrador")
-        compose.onNodeWithText("Preparar chat").performClick()
+        compose.onNodeWithContentDescription("Tu pregunta").performTextInput("   Conservar borrador   ")
+        compose.waitUntil(5_000) { chat.state.value.preparation == ChatPreparation.Error }
+        compose.runOnIdle { assertEquals(1, downloads) }
         compose.onNodeWithText("Reintentar").performClick()
-        compose.waitUntil(5_000) { chat.state.value.preparation == ChatPreparation.Ready }
+        awaitReady()
         compose.onNodeWithContentDescription("Enviar pregunta").performClick()
         compose.waitUntil(5_000) { chat.state.value.problem == ChatProblem.ContextLimit }
         compose.runOnIdle {
-            assertEquals("Conservar borrador", chat.state.value.draft)
+            assertEquals("   Conservar borrador   ", chat.state.value.draft)
             assertTrue(chat.state.value.turns.isEmpty())
+            assertEquals(2, downloads)
             reject = false
         }
         compose.onNodeWithContentDescription("Enviar pregunta").performClick()
         compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.answer == "Listo" }
+        compose.runOnIdle { assertEquals("Conservar borrador", requests.single().last().text) }
     }
 
     @Test fun nativeFailureIsVisibleAndRetryReplacesTheSameTurn() {
@@ -236,7 +256,7 @@ class ChatInteractionTest {
         }
         streams += complete("Recuperada")
         show()
-        prepare()
+        awaitReady()
         send("Pregunta")
         compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.failed == true }
         compose.onNodeWithText("Internal fixture diagnostic").assertDoesNotExist()
@@ -245,42 +265,51 @@ class ChatInteractionTest {
         compose.onAllNodesWithText("Pregunta").assertCountEquals(1)
     }
 
-    @Test fun lateLoadAfterLeavingChatClosesWithoutPublishingReady() {
+    @Test fun firstSelectionLoadsOnceAndLateLoadSurvivesTabSwitch() {
         val gate = CompletableDeferred<Unit>()
         val entered = CompletableDeferred<Unit>()
+        var downloads = 0
+        var opened = 0
         try {
-            show(open = {
+            show(initialTab = AppTab.Explorer, download = { downloads++ }, open = {
+                opened++
                 withContext(NonCancellable) { entered.complete(Unit); gate.await() }
                 connection()
             })
+            compose.runOnIdle { assertEquals(0, downloads) }
+            compose.onNode(hasText("Chat") and hasClickAction()).performClick()
             compose.onNodeWithContentDescription("Tu pregunta").performTextInput("Borrador retenido")
-            compose.onNodeWithText("Preparar chat").performClick()
             compose.waitUntil(5_000) { entered.isCompleted }
             compose.onNode(hasText("Explorador") and hasClickAction()).performClick()
             gate.complete(Unit)
-            compose.waitUntil(5_000) { chat.state.value.preparation == ChatPreparation.Unprepared }
-            compose.runOnIdle { assertEquals(1, closed); assertEquals("Borrador retenido", chat.state.value.draft) }
+            awaitReady()
             compose.onNode(hasText("Chat") and hasClickAction()).performClick()
-            compose.onNodeWithText("Chat listo").assertDoesNotExist()
-            compose.onNodeWithText("Preparar chat").assertIsDisplayed()
+            compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("Borrador retenido")
+            compose.onNodeWithText("Preparar chat").assertDoesNotExist()
+            compose.runOnIdle {
+                assertEquals(1, downloads)
+                assertEquals(1, opened)
+                assertEquals(0, closed)
+            }
         } finally { gate.complete(Unit) }
     }
 
     @Test fun backgroundAndFinalOwnerClearReleaseResourcesWithoutLosingTranscript() {
         streams += complete("Respuesta guardada")
         show()
-        prepare()
+        awaitReady()
         send("Hola")
         compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle && chat.state.value.turns.isNotEmpty() }
         compose.runOnIdle { chat.setForeground(false) }
         compose.waitUntil(5_000) { chat.state.value.preparation == ChatPreparation.Unprepared }
         compose.runOnIdle { assertEquals(1, closed); chat.setForeground(true) }
-        prepare()
+        awaitReady()
         compose.runOnIdle { store.clear(); assertEquals(2, closed); assertEquals("Respuesta guardada", chat.state.value.turns.single().answer) }
     }
 
     @Test fun backgroundDuringGenerationSuppressesLateOutputAndWaitsForCleanup() {
         val cleanup = CompletableDeferred<Unit>()
+        var opened = 0
         streams += flow {
             emit(GenerationEvent.Text("Parcial visible"))
             withContext(NonCancellable) { cleanup.await() }
@@ -288,8 +317,8 @@ class ChatInteractionTest {
             emit(GenerationEvent.Finished(FinishReason.EOG, 2))
         }
         try {
-            show()
-            prepare()
+            show(open = { opened++; connection() })
+            awaitReady()
             send("Hola")
             compose.onNodeWithText("Parcial visible").assertIsDisplayed()
             compose.runOnIdle { chat.setForeground(false); chat.setSelected(false) }
@@ -300,14 +329,16 @@ class ChatInteractionTest {
                 chat.setSelected(true)
                 chat.prepare()
                 assertEquals(ChatPreparation.Closing, chat.state.value.preparation)
+                assertEquals(1, opened)
             }
             cleanup.complete(Unit)
-            compose.waitUntil(5_000) { chat.state.value.preparation == ChatPreparation.Unprepared }
+            awaitReady()
             compose.runOnIdle {
                 assertEquals("Parcial visible", chat.state.value.turns.single().answer)
                 assertEquals(FinishReason.CANCELLED, chat.state.value.turns.single().finish)
                 assertTrue(chat.state.value.turns.replayMessages().isEmpty())
                 assertEquals(1, closed)
+                assertEquals(2, opened)
             }
         } finally { cleanup.complete(Unit) }
     }
@@ -320,7 +351,6 @@ class ChatInteractionTest {
                 withContext(NonCancellable) { entered.complete(Unit); gate.await() }
                 connection()
             })
-            compose.onNodeWithText("Preparar chat").performClick()
             compose.waitUntil(5_000) { entered.isCompleted }
             compose.runOnIdle { store.clear() }
             gate.complete(Unit)
@@ -338,7 +368,7 @@ class ChatInteractionTest {
             emit(GenerationEvent.Finished(FinishReason.LENGTH, 256))
         }
         show()
-        prepare()
+        awaitReady()
         send("Respuesta larga")
         compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.answer?.isNotEmpty() == true }
         val notice = compose.onNodeWithText("Chat local. La consulta de archivos todavía no está disponible.")
@@ -348,5 +378,57 @@ class ChatInteractionTest {
         compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
         notice.assertIsDisplayed()
         compose.onNodeWithContentDescription("Enviar pregunta").assertIsDisplayed()
+    }
+
+    @Test fun trimmedSubmissionPreservesInnerWhitespaceAndNewerDraft() {
+        val validating = CompletableDeferred<Unit>()
+        val accept = CompletableDeferred<Unit>()
+        streams += complete("Lista")
+        show(open = { connection { text, history ->
+            validating.complete(Unit)
+            accept.await()
+            budgetChatMessages(CHAT_SYSTEM_PROMPT, history, text) { 100 }
+        } })
+        awaitReady()
+        send(" \t123   456\n ")
+        compose.waitUntil(5_000) { validating.isCompleted }
+        compose.onNodeWithContentDescription("Tu pregunta").performTextReplacement("Nuevo borrador")
+        compose.runOnIdle { accept.complete(Unit) }
+        compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.answer == "Lista" }
+        compose.onNodeWithText("123   456").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("Nuevo borrador")
+        compose.runOnIdle {
+            assertEquals("123   456", requests.single().last().text)
+            assertEquals("123   456", chat.state.value.turns.single().input)
+        }
+    }
+
+    @Test fun generationContinuesAcrossTabsWithoutUnloadingModel() {
+        val finish = CompletableDeferred<Unit>()
+        streams += flow {
+            emit(GenerationEvent.Text("Parcial"))
+            finish.await()
+            emit(GenerationEvent.Text(" completa"))
+            emit(GenerationEvent.Finished(FinishReason.EOG, 2))
+        }
+        show()
+        awaitReady()
+        send("   123   ")
+        compose.onNodeWithText("123").assertIsDisplayed()
+        compose.onNodeWithText("Parcial").assertIsDisplayed()
+        compose.onNode(hasText("Explorador") and hasClickAction()).performClick()
+        compose.runOnIdle {
+            assertTrue(chat.state.value.turns.single().running)
+            assertEquals(0, closed)
+            finish.complete(Unit)
+        }
+        compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
+        compose.onNode(hasText("Chat") and hasClickAction()).performClick()
+        compose.onNodeWithText("Parcial completa").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(ChatPreparation.Ready, chat.state.value.preparation)
+            assertEquals(0, closed)
+            assertEquals("123", requests.single().last().text)
+        }
     }
 }

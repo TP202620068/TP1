@@ -19,9 +19,18 @@ class ChatStateTest {
             assertFalse(ready.copy(preparation = preparation).canSend)
         }
         for (phase in ChatPhase.entries.filter { it != ChatPhase.Idle }) assertFalse(ready.copy(phase = phase).canSend)
-        for (draft in listOf("", " \n", "bad\u0000input", "\uD800", "é".repeat(32768))) {
+        for (draft in listOf("", " \n", "bad\u0000input", "\uD800", "é".repeat(32768), " \uD800 ", " bad\u0000input ")) {
             assertFalse(ready.copy(draft = draft).canSend)
         }
+    }
+
+    @Test fun requestBudgetUsesTrimmedInputWithoutChangingDraft() {
+        val input = "x".repeat(64 * 1024 - CHAT_SYSTEM_PROMPT.toByteArray().size)
+        val padded = ChatState(draft = " \t$input\n ", preparation = ChatPreparation.Ready)
+        assertTrue(padded.canSend)
+        assertEquals(" \t$input\n ", padded.draft)
+        assertFalse(padded.copy(draft = "$input x").canSend)
+        assertTrue(padded.copy(draft = "   123   ").canSend)
     }
 
     @Test fun onlyUsableCompletedTurnsBecomeHistory() {

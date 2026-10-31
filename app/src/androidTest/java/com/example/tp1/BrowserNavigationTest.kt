@@ -38,7 +38,8 @@ import org.junit.Rule
 import org.junit.Test
 
 class BrowserNavigationTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 0) val offlineChat = OfflineChatRule()
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val robot = PickerRobot()

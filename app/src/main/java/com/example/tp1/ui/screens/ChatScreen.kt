@@ -1,5 +1,9 @@
 package com.example.tp1.ui.screens
 
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.keyframes
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -43,6 +47,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
@@ -103,6 +108,7 @@ internal fun ChatScreen(
 
 @Composable
 private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Modifier = Modifier, onRetry: () -> Unit = {}) {
+    val assistantLabel = stringResource(R.string.chat_assistant)
     Column(modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.large,
             modifier = Modifier.align(Alignment.End).fillMaxWidth(0.9f)) {
@@ -111,14 +117,13 @@ private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Mod
                 SelectionContainer { Text(turn.input, style = MaterialTheme.typography.bodyLarge) }
             }
         }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(stringResource(R.string.chat_assistant), style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.primary)
+        Column(modifier = Modifier.semantics { contentDescription = assistantLabel },
+            verticalArrangement = Arrangement.spacedBy(4.dp)) {
             if (turn.answer.isNotEmpty()) SelectionContainer {
                 Text(turn.answer, style = MaterialTheme.typography.bodyLarge)
             }
+            if (turn.running) TypingIndicator(Modifier.padding(4.dp))
             val status = when {
-                turn.running -> R.string.chat_generating
                 turn.failed -> R.string.chat_response_error
                 turn.finish == FinishReason.LENGTH -> R.string.chat_length
                 turn.finish == FinishReason.CANCELLED -> R.string.chat_cancelled
@@ -135,6 +140,33 @@ private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Mod
 }
 
 @Composable
+private fun TypingIndicator(modifier: Modifier = Modifier) {
+    val description = stringResource(R.string.chat_generating)
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    val transition = rememberInfiniteTransition(label = "typing")
+    Row(modifier.semantics {
+        contentDescription = description
+        liveRegion = LiveRegionMode.Polite
+    }, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        repeat(3) { index ->
+            val delay = index * 200
+            val alpha = transition.animateFloat(
+                initialValue = 0.3f,
+                targetValue = 0.3f,
+                animationSpec = infiniteRepeatable(keyframes {
+                    durationMillis = 1200
+                    0.3f at delay
+                    1.0f at delay + 200
+                    0.3f at delay + 400
+                }),
+                label = "typingDot$index"
+            )
+            Spacer(Modifier.size(8.dp).drawBehind { drawCircle(color, alpha = alpha.value) })
+        }
+    }
+}
+
+@Composable
 internal fun ChatComposer(
     state: ChatState,
     modifier: Modifier = Modifier,
@@ -146,11 +178,6 @@ internal fun ChatComposer(
     val inputLabel = stringResource(R.string.chat_input_label)
     Column(modifier.fillMaxWidth()
         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
-        if (state.preparation == ChatPreparation.Ready && state.phase == ChatPhase.Idle) {
-            Text(stringResource(R.string.chat_ready), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp))
-        }
         if (state.preparation != ChatPreparation.Ready) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -164,8 +191,8 @@ internal fun ChatComposer(
                     else -> R.string.chat_prepare_description
                 }), style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f)
                     .semantics { liveRegion = LiveRegionMode.Polite })
-                if (!preparing) TextButton(onClick = onPrepare, enabled = !state.busy) {
-                    Text(stringResource(if (state.preparation == ChatPreparation.Error) R.string.retry else R.string.chat_prepare))
+                if (state.preparation == ChatPreparation.Error) TextButton(onClick = onPrepare, enabled = !state.busy) {
+                    Text(stringResource(R.string.retry))
                 }
             }
         }
@@ -213,4 +240,10 @@ private fun ChatScreenPreview() {
 @Composable
 private fun ChatComposerPreview() {
     TP1Theme { Box { ChatComposer(ChatState()) } }
+}
+
+@Preview(device = Devices.PIXEL_7, showBackground = true)
+@Composable
+private fun TypingIndicatorPreview() {
+    TP1Theme { TypingIndicator(Modifier.padding(4.dp)) }
 }

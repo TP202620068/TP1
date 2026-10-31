@@ -37,8 +37,11 @@ internal data class ChatState(
 ) {
     val busy: Boolean get() = phase != ChatPhase.Idle || preparation in setOf(
         ChatPreparation.Acquiring, ChatPreparation.Loading, ChatPreparation.Closing)
-    val validDraft: Boolean get() = validChatInput(draft) &&
-        chatBytes(draft).size + CHAT_SYSTEM_PROMPT.toByteArray().size <= 64 * 1024
+    val validDraft: Boolean get() {
+        val input = draft.trim()
+        return validChatInput(input) &&
+            chatBytes(input).size + CHAT_SYSTEM_PROMPT.toByteArray().size <= 64 * 1024
+    }
     val canSend: Boolean get() = preparation == ChatPreparation.Ready && !busy && validDraft && problem != ChatProblem.InvalidInput
 }
 

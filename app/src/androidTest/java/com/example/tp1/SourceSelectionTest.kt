@@ -35,7 +35,8 @@ import org.junit.Test
 import java.io.ByteArrayOutputStream
 
 class SourceSelectionTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 0) val offlineChat = OfflineChatRule()
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
     private val robot = PickerRobot()
     private val first = "TP1-contrato.txt"
     private val second = "TP1-Contrato_de_alquiler_firmado_y_revisado_octubre_2026.txt"

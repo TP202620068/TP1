@@ -82,13 +82,13 @@ internal class ChatViewModel(
     fun setSelected(value: Boolean) {
         if (selected == value) return
         selected = value
-        if (!active) release()
+        if (active) prepare()
     }
 
     fun setForeground(value: Boolean) {
         if (foreground == value) return
         foreground = value
-        if (!active) release()
+        if (!foreground) release() else if (selected) prepare()
     }
 
     fun prepare() {
@@ -100,11 +100,11 @@ internal class ChatViewModel(
             try {
                 downloadModel()
                 currentCoroutineContext().ensureActive()
-                if (ticket != epoch || !active) throw CancellationException()
+                if (ticket != epoch || !foreground) throw CancellationException()
                 mutableState.value = state.value.copy(preparation = ChatPreparation.Loading)
                 opened = openModel()
                 currentCoroutineContext().ensureActive()
-                if (ticket != epoch || !active) throw CancellationException()
+                if (ticket != epoch || !foreground) throw CancellationException()
                 connection = opened
                 opened = null
                 mutableState.value = state.value.copy(preparation = ChatPreparation.Ready)
@@ -131,8 +131,9 @@ internal class ChatViewModel(
         generate(turn.input, retry = true)
     }
 
-    private fun generate(input: String, retry: Boolean) {
+    private fun generate(text: String, retry: Boolean) {
         val owner = connection ?: return
+        val input = text.trim()
         val ticket = ++epoch
         val history = (if (retry) state.value.turns.dropLast(1) else state.value.turns).replayMessages()
         var accepted: Long? = null
@@ -141,18 +142,18 @@ internal class ChatViewModel(
             try {
                 val messages = owner.prepare(input, history)
                 currentCoroutineContext().ensureActive()
-                if (ticket != epoch || !active) throw CancellationException()
+                if (ticket != epoch || !foreground) throw CancellationException()
                 val turn = if (retry) state.value.turns.last().copy(answer = "", running = true, finish = null, failed = false)
                     else ChatTurn(++nextTurn, input, running = true)
                 accepted = turn.id
-                if (!retry && state.value.draft == input) editDraft("")
+                if (!retry && state.value.draft == text) editDraft("")
                 mutableState.value = state.value.copy(
                     turns = (if (retry) state.value.turns.dropLast(1) else state.value.turns) + turn,
                     phase = ChatPhase.Generating)
                 var finished = false
                 owner.stream(messages).collect { event ->
                     currentCoroutineContext().ensureActive()
-                    if (ticket != epoch || !active) throw CancellationException()
+                    if (ticket != epoch || !foreground) throw CancellationException()
                     check(!finished) { "Event after terminal status" }
                     when (event) {
                         is GenerationEvent.Started -> Unit
@@ -225,8 +226,11 @@ internal class ChatViewModel(
             } catch (error: Exception) {
                 Log.w("TP1Chat", "Chat cleanup failed", error)
             } finally {
-                if (ticket == epoch) mutableState.value = state.value.copy(
-                    preparation = ChatPreparation.Unprepared, phase = ChatPhase.Idle)
+                if (ticket == epoch) {
+                    mutableState.value = state.value.copy(preparation = ChatPreparation.Unprepared, phase = ChatPhase.Idle)
+                    // A foreground return can arrive before native cleanup finishes.
+                    if (active) prepare()
+                }
             }
         }
     }

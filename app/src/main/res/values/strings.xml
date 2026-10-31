@@ -41,11 +41,9 @@
     <string name="send_question">Enviar pregunta</string>
     <string name="chat_you">Tú</string>
     <string name="chat_assistant">Asistente</string>
-    <string name="chat_prepare">Preparar chat</string>
     <string name="chat_prepare_description">La primera vez se descargará el modelo.</string>
     <string name="chat_acquiring">Verificando o descargando el modelo…</string>
     <string name="chat_loading">Cargando el modelo…</string>
-    <string name="chat_ready">Chat listo</string>
     <string name="chat_closing">Liberando el modelo…</string>
     <string name="chat_prepare_error">No se pudo preparar el chat. Comprueba la conexión y el espacio disponible.</string>
     <string name="chat_generating">Generando respuesta…</string>
