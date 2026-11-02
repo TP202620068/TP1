@@ -10,7 +10,7 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MarkdownChunkerTest {
-    // Character counts only exercise splitting. Real Jina counts are reported by device tests.
+    // Synthetic counters exercise grouping and splitting. Real Jina counts are reported by device tests.
     private fun chunks(text: String, limit: Int = 1024): List<MarkdownChunk> = runBlocking {
         chunkMarkdown(text, limit) { it.codePointCount(0, it.length) + 3 }
     }
@@ -42,26 +42,109 @@ class MarkdownChunkerTest {
         }
     }
 
-    @Test fun coresAdvanceIndependentlyOfSentenceOverlap() {
-        val text = ("A".repeat(99) + ". ").repeat(25)
-        // A permissive fake budget isolates the character-first boundary policy.
-        val result = chunks(text, 8192)
-        assertEquals(listOf(784, 784, 784, 173), result.map { it.coreCharacters })
-        assertEquals(0, result.first().startByte)
-        assertEquals(909, result.first().endByte)
-        assertEquals(707, result[1].startByte)
-        assertEquals(784, result[1].coreStartByte)
-        assertTrue(result.zipWithNext().all { (a, b) -> a.endByte > b.startByte })
-        assertCoverage(text, result)
-        assertEquals(result, chunks(text, 8192))
+    @Test fun blankOnlyUnitsDoNotAccumulateAtCoreStarts() {
+        val content = "Texto " + "界😀".repeat(120) + ".\n"
+        for (padding in listOf("\n".repeat(4096), "\n".repeat(60_000), " \t\r\n".repeat(1000))) {
+            val text = padding + content + padding
+            val result = chunks(text, 8192)
+            val chunk = result.single()
+            assertEquals(padding.toByteArray(Charsets.UTF_8).size, chunk.coreStartByte)
+            assertEquals((padding + content).toByteArray(Charsets.UTF_8).size, chunk.coreEndByte)
+            assertEquals(content.codePointCount(0, content.length), chunk.coreCharacters)
+            assertCoverage(text, result)
+        }
     }
 
-    @Test fun punctuationFreeTextHasBoundedExpansionAndCompleteCoverage() {
-        val text = "x".repeat(12_000)
-        val result = chunks(text, 8192)
-        assertEquals(16, result.size)
-        assertTrue(result.all { it.text.length <= 784 + 2 * (56 + 784) })
+    @Test fun coresAdvanceIndependentlyOfSentenceOverlap() {
+        val text = ("A".repeat(99) + ". ").repeat(25)
+        val result = chunks(text)
+        assertEquals(listOf(303, 303, 303, 303, 303, 303, 303, 303, 101), result.map { it.coreCharacters })
+        assertEquals(0, result.first().startByte)
+        assertEquals(404, result.first().endByte)
+        assertEquals(202, result[1].startByte)
+        assertEquals(303, result[1].coreStartByte)
+        assertEquals(707, result[1].endByte)
+        assertTrue(result.zipWithNext().all { (a, b) -> a.endByte > b.startByte })
         assertCoverage(text, result)
+        assertEquals(result, chunks(text))
+    }
+
+    @Test fun punctuationFreeTextSplitsWithoutExceedingTheHardLimit() {
+        val text = "x".repeat(12_000)
+        val result = chunks(text)
+        assertTrue(result.size > 1)
+        assertTrue(result.all { it.inputTokens <= 1024 })
+        assertCoverage(text, result)
+    }
+
+    @Test fun coreThresholdAndSymmetricContextUseCombinedCountsRatherThanSums() = runBlocking<Unit> {
+        val unit = "A".repeat(45) + ". "
+        val text = unit.repeat(20)
+        val calls = mutableMapOf<String, Int>()
+        // Independent units each pay 180 tokens, while joining units pays that overhead only once.
+        val count: suspend (String) -> Int = { value ->
+            calls[value] = (calls[value] ?: 0) + 1
+            value.length + 180
+        }
+        val firstText = unit.replace('A', 'B') + unit.replace('A', 'C') + unit.replace('A', 'D')
+        val first = chunkMarkdown(firstText, 1024, count).first()
+        assertEquals(47, first.coreCharacters)
+        assertEquals(227, firstText.substring(0, 47).length + 180)
+        assertEquals(274, first.inputTokens)
+        assertEquals(1, calls[firstText.substring(0, 47)])
+        assertEquals(2, calls[firstText.substring(0, 94)])
+
+        val result = chunkMarkdown(text, 1024) { it.length + 180 }
+        assertEquals(47, result[1].coreCharacters)
+        assertEquals(0, result[1].startByte)
+        assertEquals(47, result[1].coreStartByte)
+        assertEquals(94, result[1].coreEndByte)
+        assertEquals(141, result[1].endByte)
+        assertEquals(321, result[1].inputTokens)
+
+        // Summing standalone counts would stop too soon; the complete core reaches 224 only after three units.
+        val grouped = chunkMarkdown(text, 1024) { it.length + 100 }
+        assertEquals(141, grouped.first().coreCharacters)
+        assertEquals(241, grouped.first().coreCharacters + 100)
+    }
+
+    @Test fun unitThatWouldCrossHardLimitIsDeferredAndContextMayBeReduced() {
+        val first = "A".repeat(99) + ". "
+        val large = "B".repeat(949) + ". "
+        val text = first + large + "Fin."
+        val result = chunks(text)
+        assertEquals(101, result.first().coreCharacters)
+        assertEquals(101, result.first().endByte)
+        assertTrue(result.all { it.inputTokens <= 1024 })
+        assertCoverage(text, result)
+    }
+
+    @Test fun hugeLogicalUnitsRespectUtf8ByteLimitBeforeCallingTokenizer() = runBlocking<Unit> {
+        val text = "界".repeat(30_000)
+        val result = chunkMarkdown(text, 1024) { candidate ->
+            assertTrue(candidate.toByteArray().size + 10 <= 65536)
+            candidate.codePointCount(0, candidate.length) + 3
+        }
+        assertTrue(result.size > 1)
+        assertCoverage(text, result)
+    }
+
+    @Test fun headingsRemainAttachedToTheirFirstContentUnit() {
+        val text = "# Title\n\n" + "A".repeat(700) + ".\n"
+        val result = chunks(text)
+        assertEquals(1, result.size)
+        assertEquals(text, result.single().text)
+    }
+
+    @Test fun nonMonotonicPrefixCountsStillProduceBoundedCompleteCoverage() = runBlocking<Unit> {
+        val text = "a".repeat(2500)
+        val result = chunkMarkdown(text, 64) { candidate ->
+            candidate.length + 3 + if (candidate.length % 7 == 0) 12 else 0
+        }
+        assertTrue(result.all { it.inputTokens <= 64 })
+        val source = text.toByteArray()
+        val cores = result.flatMap { source.copyOfRange(it.coreStartByte, it.coreEndByte).toList() }.toByteArray()
+        assertArrayEquals(source, cores)
     }
 
     @Test fun headingsSeparateSectionsButFencedHeadingsDoNot() {

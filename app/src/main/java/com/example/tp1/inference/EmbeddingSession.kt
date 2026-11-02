@@ -10,6 +10,9 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
+internal const val EMBEDDING_INPUT_BYTES = 64 * 1024
+internal const val EMBEDDING_DOCUMENT_PREFIX = "Document: "
+
 /** One loaded Jina owner. Requests are independent; concurrent requests and other loaded models are rejected. */
 internal class EmbeddingSession private constructor(private val engine: LlamaEngine, val maxInputTokens: Int) {
     /** Adds Document: internally. Returns 512 finite, L2-normalized floats. Never truncates input. */
@@ -56,10 +59,10 @@ internal class EmbeddingSession private constructor(private val engine: LlamaEng
 /** Shares the strict UTF-8/64 KiB JNI input contract with generation; role text counts toward that limit. */
 internal fun embeddingInput(text: String, query: Boolean): ByteArray {
     require(text.isNotBlank()) { "Embedding text must not be blank" }
-    require(text.length <= 64 * 1024) { "Embedding text exceeds byte limit" }
+    require(text.length <= EMBEDDING_INPUT_BYTES) { "Embedding text exceeds byte limit" }
     return try {
-        chatBytes((if (query) "Query: " else "Document: ") + text).also {
-            require(it.size <= 64 * 1024) { "Embedding input exceeds 64 KiB, including prefix" }
+        chatBytes((if (query) "Query: " else EMBEDDING_DOCUMENT_PREFIX) + text).also {
+            require(it.size <= EMBEDDING_INPUT_BYTES) { "Embedding input exceeds 64 KiB, including prefix" }
         }
     } catch (error: CharacterCodingException) { throw IllegalArgumentException("Embedding text must be valid Unicode", error) }
 }

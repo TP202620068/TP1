@@ -162,7 +162,7 @@ class DocumentExtractorTest {
         try {
             val chunks = session.chunkDocument(markdown)
             assertTrue(chunks.size > 1)
-            reportChunkTokens("anydoc-rtf", chunks, session.maxInputTokens)
+            reportChunkTokens("anydoc-rtf", markdown, chunks, session)
             for (chunk in chunks) {
                 assertEquals(session.countDocumentTokens(chunk.text), chunk.inputTokens)
                 assertTrue(chunk.inputTokens <= session.maxInputTokens)
