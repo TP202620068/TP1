@@ -49,7 +49,6 @@
     <string name="chat_generating">Generando respuesta…</string>
     <string name="chat_stop">Detener respuesta</string>
     <string name="chat_stopping">Deteniendo respuesta…</string>
-    <string name="chat_cancelled">Respuesta detenida.</string>
     <string name="chat_length">Se alcanzó el límite de respuesta.</string>
     <string name="chat_deadline">Se agotó el tiempo. La respuesta está incompleta.</string>
     <string name="chat_response_error">No se pudo completar la respuesta. Inténtalo de nuevo.</string>

@@ -47,8 +47,10 @@ class MainActivity : ComponentActivity() {
                     } catch (_: ActivityNotFoundException) {
                         sources.pickerUnavailable()
                     }
-                }, onOpen = { entry -> browser.open(entry) { startActivity(it) } },
-                    onRefresh = { refreshBrowser() })
+                },
+                    onOpen = { entry -> browser.open(entry) { startActivity(it) } },
+                    onRefresh = { refreshBrowser() }
+                )
             }
         }
     }

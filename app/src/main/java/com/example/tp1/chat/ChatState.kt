@@ -22,7 +22,7 @@ internal data class ChatTurn(
     val failed: Boolean = false
 ) {
     val canRetry: Boolean get() = !running && (failed || finish in setOf(
-        FinishReason.CANCELLED, FinishReason.DEADLINE, FinishReason.NATIVE_FAILURE))
+        FinishReason.DEADLINE, FinishReason.NATIVE_FAILURE))
     // LENGTH answers are deliberately replayed as displayed. Failed/stopped partials never are.
     val reusable: Boolean get() = !failed && !running && finish in setOf(FinishReason.EOG, FinishReason.LENGTH) &&
         validChatInput(answer)

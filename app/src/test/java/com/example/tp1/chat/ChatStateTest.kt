@@ -40,7 +40,9 @@ class ChatStateTest {
             ChatTurn(10, "user", "", finish = FinishReason.EOG),
             ChatTurn(11, "user", "answer", finish = FinishReason.EOG, failed = true))
         assertEquals(pair("user") + pair("user"), (turns + extra).replayMessages())
-        assertTrue(turns.first { it.finish == FinishReason.CANCELLED }.canRetry)
+        assertFalse(turns.first { it.finish == FinishReason.CANCELLED }.canRetry)
+        assertTrue(turns.first { it.finish == FinishReason.DEADLINE }.canRetry)
+        assertTrue(turns.first { it.finish == FinishReason.NATIVE_FAILURE }.canRetry)
         assertFalse(turns.first { it.finish == FinishReason.LENGTH }.canRetry)
     }
 

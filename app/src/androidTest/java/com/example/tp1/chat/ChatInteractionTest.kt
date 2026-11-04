@@ -11,6 +11,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextEquals
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToIndexAction
@@ -178,9 +179,13 @@ class ChatInteractionTest {
         val generating = compose.onNodeWithContentDescription("Generando respuesta…")
         generating.assertIsDisplayed()
         compose.onNodeWithText("Asistente").assertDoesNotExist()
-        compose.onNodeWithContentDescription("Asistente").assertIsDisplayed()
+        val assistant = compose.onNodeWithContentDescription("Asistente")
+        assistant.assertIsDisplayed()
+        val waitingWidth = assistant.getUnclippedBoundsInRoot().let { it.right - it.left }
         compose.runOnIdle { firstText.complete(Unit) }
         compose.onNodeWithText("Hola").assertIsDisplayed()
+        assertTrue("The response bubble must expand only after text arrives",
+            assistant.getUnclippedBoundsInRoot().let { it.right - it.left } > waitingWidth)
         generating.assertDoesNotExist()
         compose.onNodeWithContentDescription("Detener respuesta").assertIsEnabled()
         compose.runOnIdle { chat.send(); assertTrue(chat.state.value.turns.single().running) }
@@ -197,7 +202,7 @@ class ChatInteractionTest {
         }
     }
 
-    @Test fun stopWaitsForCleanupAndKeepsPartialTextOutOfRetriedHistory() {
+    @Test fun stopWaitsForCleanupAndKeepsPartialTextOutOfFollowingHistory() {
         val cleanup = CompletableDeferred<Unit>()
         streams += flow {
             try { emit(GenerationEvent.Text("Respuesta parcial")); awaitCancellation() }
@@ -214,12 +219,39 @@ class ChatInteractionTest {
             compose.runOnIdle { assertEquals(ChatPhase.Stopping, chat.state.value.phase); assertEquals(1, stopped) }
             cleanup.complete(Unit)
             compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
-            compose.onNodeWithText("Respuesta detenida.").assertIsDisplayed()
-            compose.onNodeWithText("Reintentar").performClick()
-            compose.waitUntil(5_000) { chat.state.value.turns.single().answer == "Respuesta completa" }
+            compose.onNodeWithText("Respuesta parcial").assertIsDisplayed()
+            compose.onNodeWithText("Respuesta detenida.").assertDoesNotExist()
+            compose.onNodeWithText("Reintentar").assertDoesNotExist()
+            compose.runOnIdle {
+                chat.retry()
+                assertEquals(1, requests.size)
+                assertFalse(chat.state.value.turns.single().canRetry)
+            }
+            send("Siguiente pregunta")
+            compose.waitUntil(5_000) { chat.state.value.turns.last().answer == "Respuesta completa" }
             compose.onAllNodesWithText("Pregunta original").assertCountEquals(1)
-            compose.runOnIdle { assertEquals(listOf("Pregunta original"), requests.last().map { it.text }) }
+            compose.runOnIdle { assertEquals(listOf("Siguiente pregunta"), requests.last().map { it.text }) }
         } finally { cleanup.complete(Unit) }
+    }
+
+    @Test fun stopBeforeFirstTextRemovesEmptyAssistantBubble() {
+        streams += flow { awaitCancellation() }
+        show()
+        awaitReady()
+        send("Pregunta sin respuesta")
+        compose.onNodeWithContentDescription("Generando respuesta…").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Detener respuesta").performClick()
+        compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
+        compose.onNodeWithText("Pregunta sin respuesta").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Asistente").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Generando respuesta…").assertDoesNotExist()
+        compose.onNodeWithText("Respuesta detenida.").assertDoesNotExist()
+        compose.onNodeWithText("Reintentar").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Enviar pregunta").assertIsDisplayed()
+        compose.runOnIdle {
+            assertEquals(FinishReason.CANCELLED, chat.state.value.turns.single().finish)
+            assertTrue(chat.state.value.turns.single().answer.isEmpty())
+        }
     }
 
     @Test fun preparationFailureAndContextFailurePreserveDraftForRetry() {
@@ -260,8 +292,39 @@ class ChatInteractionTest {
         send("Pregunta")
         compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.failed == true }
         compose.onNodeWithText("Internal fixture diagnostic").assertDoesNotExist()
+        compose.onNodeWithText("No se pudo completar la respuesta. Inténtalo de nuevo.").assertIsDisplayed()
         compose.onNodeWithText("Reintentar").performClick()
         compose.waitUntil(5_000) { chat.state.value.turns.single().answer == "Recuperada" }
+        compose.onAllNodesWithText("Pregunta").assertCountEquals(1)
+    }
+
+    @Test fun streamExceptionPreservesPartialTextAndAllowsRetry() {
+        streams += flow {
+            emit(GenerationEvent.Text("Parcial"))
+            throw IOException("Fixture stream failure")
+        }
+        streams += complete("Recuperada")
+        show()
+        awaitReady()
+        send("Pregunta")
+        compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.failed == true }
+        compose.onNodeWithText("Parcial").assertIsDisplayed()
+        compose.onNodeWithText("No se pudo completar la respuesta. Inténtalo de nuevo.").assertIsDisplayed()
+        compose.onNodeWithText("Reintentar").performClick()
+        compose.waitUntil(5_000) { chat.state.value.turns.single().answer == "Recuperada" }
+        compose.runOnIdle { assertEquals(listOf("Pregunta"), requests.last().map { it.text }) }
+    }
+
+    @Test fun timeoutBeforeFirstTextShowsStatusAndAllowsRetry() {
+        streams += flow { emit(GenerationEvent.Finished(FinishReason.DEADLINE, 0)) }
+        streams += complete("A tiempo")
+        show()
+        awaitReady()
+        send("Pregunta")
+        compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.finish == FinishReason.DEADLINE }
+        compose.onNodeWithText("Se agotó el tiempo. La respuesta está incompleta.").assertIsDisplayed()
+        compose.onNodeWithText("Reintentar").performClick()
+        compose.waitUntil(5_000) { chat.state.value.turns.single().answer == "A tiempo" }
         compose.onAllNodesWithText("Pregunta").assertCountEquals(1)
     }
 

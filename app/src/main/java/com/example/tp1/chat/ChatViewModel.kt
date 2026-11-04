@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlin.time.Duration.Companion.milliseconds
 
 // Saved state stores UTF-16; keep its size bounded independently of the UTF-8 request budget.
 private const val MAX_DRAFT_LENGTH = 64 * 1024
@@ -115,7 +116,7 @@ internal class ChatViewModel(
             backgroundedAt = elapsedRealtime()
             stop()
             unloadJob = viewModelScope.launch {
-                delay(BACKGROUND_TIMEOUT_MILLIS)
+                delay(BACKGROUND_TIMEOUT_MILLIS.milliseconds)
                 release()
             }
         }
@@ -208,7 +209,7 @@ internal class ChatViewModel(
                 if (ticket == epoch) {
                     if (accepted == null) mutableState.value = state.value.copy(problem = keepDraftError(
                         if (error is IllegalArgumentException) ChatProblem.ContextLimit else ChatProblem.Generation))
-                    else updateTurn(accepted!!) { it.copy(running = false, failed = true, finish = FinishReason.NATIVE_FAILURE) }
+                    else updateTurn(accepted) { it.copy(running = false, failed = true, finish = FinishReason.NATIVE_FAILURE) }
                 }
             } finally {
                 if (ticket == epoch) mutableState.value = state.value.copy(phase = ChatPhase.Idle)
