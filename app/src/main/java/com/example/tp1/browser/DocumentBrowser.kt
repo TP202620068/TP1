@@ -81,13 +81,19 @@ internal class DocumentBrowser(private val resolver: ContentResolver) {
     }
 
     fun openRead(source: SelectedSource, entry: BrowserEntry): AuthorizedDocument {
+        val details = authorize(source, entry)
+        val stream = resolver.openInputStream(authorizedDocument(source, entry.uri)) ?: throw FileNotFoundException("Document unavailable")
+        return AuthorizedDocument(details, stream)
+    }
+
+    /** Checks provider scope and identity without reading or hashing document contents. */
+    fun authorize(source: SelectedSource, entry: BrowserEntry): SourceMetadata {
         requireRead(source)
         if (entry.sourceUri != source.record.uri || entry.directory) throw SecurityException("Invalid document selection")
         val uri = authorizedDocument(source, entry.uri)
         val details = metadata(uri.toString(), entry.metadata.name)
         if (details.mimeType == Document.MIME_TYPE_DIR) throw FileNotFoundException("Cannot extract a directory")
-        val stream = resolver.openInputStream(uri) ?: throw FileNotFoundException("Document unavailable")
-        return AuthorizedDocument(details, stream)
+        return details
     }
 
     private fun requireRead(source: SelectedSource) {

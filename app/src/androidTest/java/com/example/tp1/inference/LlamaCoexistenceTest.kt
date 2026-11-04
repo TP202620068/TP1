@@ -36,8 +36,8 @@ class LlamaCoexistenceTest {
         val flags = Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION
         val source = store.add(store.restore().sources, listOf(uri), SourceKind.Document, flags).sources.single { it.record.uri == uri }
         try {
-            val artifact = DocumentExtractor(context).extract(source, DocumentBrowser(resolver).root(source))
-            val text = artifact.markdown.inputStream().use { String(it.readNBytes(1024), Charsets.UTF_8) }
+            val extracted = DocumentExtractor(context).extract(source, DocumentBrowser(resolver).root(source))
+            val text = extracted.markdown.take(1024)
             assertTrue(text.contains("coexistence fixture"))
             return text
         } finally { store.remove(store.restore().sources, uri) }

@@ -11,23 +11,26 @@
     public static java.lang.String hex(byte[]);
 }
 -keep,allowoptimization class com.example.tp1.extraction.ExtractionLimits { public <init>(...); }
--keep,allowoptimization class com.example.tp1.extraction.ExtractionArtifact {
-    public java.io.File getMarkdown();
-    public java.io.File getProvenance();
-    public boolean equals(java.lang.Object);
+-keep,allowoptimization class com.example.tp1.extraction.ExtractedDocument {
+    public <init>(java.lang.String, java.lang.String, java.lang.String);
+    public java.lang.String getMarkdown();
+    public java.lang.String getDisplayName();
+    public java.lang.String getInputSha256();
 }
 -keep,allowoptimization class com.example.tp1.extraction.ExtractionFailure {
+    public <init>(java.lang.String, java.lang.String, java.lang.String, long[], long);
+    public <init>(java.lang.String, java.lang.String, java.lang.String, long[], long, int, kotlin.jvm.internal.DefaultConstructorMarker);
     public java.lang.String getCode();
     public long[] getOcrPages();
     public long getPageCount();
 }
--keep,allowoptimization class com.example.tp1.extraction.ExtractionArtifacts {
-    public static com.example.tp1.extraction.ExtractionArtifacts INSTANCE;
+-keep,allowoptimization class com.example.tp1.extraction.ExtractionWork {
+    public static com.example.tp1.extraction.ExtractionWork INSTANCE;
     public java.io.File operations(android.content.Context);
-    public com.example.tp1.extraction.ExtractionArtifact current(android.content.Context, com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry);
-    public void removed(android.content.Context, java.lang.String, kotlin.jvm.functions.Function1);
     public kotlinx.coroutines.sync.Mutex getPermit();
 }
+# The restart fixture resets only this process-local initialization guard.
+-keepclassmembers class com.example.tp1.extraction.ExtractionWork { private static boolean initialized; }
 
 # Separate test APK roots. Native registration has its own production rules.
 -keep @interface com.example.tp1.inference.ManualInference
@@ -214,3 +217,62 @@
 -keep,allowoptimization enum com.example.tp1.chat.ChatPreparation { public static com.example.tp1.chat.ChatPreparation *; }
 -keep,allowoptimization enum com.example.tp1.chat.ChatPhase { public static com.example.tp1.chat.ChatPhase *; }
 -keep,allowoptimization enum com.example.tp1.chat.ChatProblem { public static com.example.tp1.chat.ChatProblem *; }
+
+# The new indexing APIs are roots only for the separately compiled instrumentation APK.
+-keep,allowoptimization class com.example.tp1.indexing.DocumentIndexer {
+    public <init>(...);
+    public java.lang.Object index(com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry, boolean, kotlin.coroutines.Continuation);
+    public static java.lang.Object index$default(com.example.tp1.indexing.DocumentIndexer, com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexEmbeddings { public <init>(...); }
+-keep,allowoptimization interface com.example.tp1.indexing.IndexResult
+-keep,allowoptimization class com.example.tp1.indexing.IndexResult$Complete {
+    public long getDocumentId();
+    public java.lang.String getGeneration();
+    public int getChunks();
+    public boolean getUnchanged();
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexStore {
+    public <init>(...);
+    public static com.example.tp1.indexing.IndexStore$Companion Companion;
+    public com.example.tp1.indexing.IndexStore$Ticket request(com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry);
+    public com.example.tp1.indexing.IndexStore$Candidate stage(com.example.tp1.indexing.IndexStore$Ticket);
+    public long append(com.example.tp1.indexing.IndexStore$Candidate, int, com.example.tp1.extraction.MarkdownChunk, float[], int);
+    public void publish(com.example.tp1.indexing.IndexStore$Candidate, com.example.tp1.indexing.IndexIdentity, int, kotlin.coroutines.CoroutineContext);
+    public int discard(com.example.tp1.indexing.IndexStore$Candidate);
+    public com.example.tp1.indexing.IndexSnapshot read(com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry);
+    public void close();
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexStore$Companion {
+    public java.io.File databaseFile(android.content.Context);
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexStore$Candidate { public java.lang.String getGeneration(); }
+-keep,allowoptimization class com.example.tp1.indexing.IndexStore$Ticket
+-keep,allowoptimization class com.example.tp1.indexing.IndexSnapshot {
+    public long getDocumentId();
+    public java.lang.String getGeneration();
+    public com.example.tp1.indexing.IndexIdentity getIdentity();
+    public java.util.List getChunks();
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexIdentity {
+    public java.lang.String getDisplayName();
+    public java.lang.String getInputSha256();
+    public java.lang.String getModelSha256();
+    public int getMaxInputTokens();
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexedChunk {
+    public int getOrdinal();
+    public java.lang.String getText();
+    public int getInputTokens();
+    public float[] getVector();
+}
+-keep,allowoptimization class com.example.tp1.inference.NativeWorkHandoff {
+    public static com.example.tp1.inference.NativeWorkHandoff INSTANCE;
+    public boolean getBlocked();
+    public java.lang.Object acquire(java.lang.Object, kotlin.coroutines.Continuation);
+    public java.lang.Object release(java.lang.Object, kotlin.coroutines.Continuation);
+}
+-keep,allowoptimization class com.example.tp1.extraction.MarkdownChunk {
+    public <init>(java.lang.String, int, int, int, int, int, int);
+    public boolean equals(java.lang.Object);
+}

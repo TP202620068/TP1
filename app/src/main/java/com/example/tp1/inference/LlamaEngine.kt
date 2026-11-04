@@ -2,7 +2,7 @@ package com.example.tp1.inference
 
 import android.content.Context
 import android.os.ParcelFileDescriptor
-import com.example.tp1.extraction.ExtractionArtifacts
+import com.example.tp1.extraction.ExtractionWork
 import java.io.IOException
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
@@ -69,7 +69,7 @@ internal class LlamaEngine(private val models: ModelManager) {
         val coroutine = currentCoroutineContext()
         operation(onCancelled = ::releaseModel) { owner ->
             check(model == null) { "Model already loaded" }
-            check(ExtractionArtifacts.permit.tryLock()) { "Extraction or another model owns the native memory permit" }
+            check(ExtractionWork.permit.tryLock()) { "Extraction or another model owns the native memory permit" }
             memoryPermit = true
             try {
                 val profile = models.profile(selected)
@@ -248,7 +248,7 @@ internal class LlamaEngine(private val models: ModelManager) {
         try { unloadNative(owner) } finally {
             try { model?.close() } finally {
                 model = null
-                if (memoryPermit) { memoryPermit = false; ExtractionArtifacts.permit.unlock() }
+                if (memoryPermit) { memoryPermit = false; ExtractionWork.permit.unlock() }
             }
         }
     }

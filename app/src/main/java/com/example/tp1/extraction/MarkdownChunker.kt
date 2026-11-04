@@ -24,7 +24,7 @@ private const val CORE_TOKENS = 224
 private const val CONTEXT_TOKENS = 16
 private const val MAX_TEXT_BYTES = EMBEDDING_INPUT_BYTES - EMBEDDING_DOCUMENT_PREFIX.length
 
-/** markdown-token-v2: logical units form a 224+ token core, with 16+ token growth on each side. */
+/** Logical units form a 224+ token core, with 16+ token growth on each side. */
 internal suspend fun chunkMarkdown(
     markdown: String,
     maxInputTokens: Int,

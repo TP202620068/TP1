@@ -16,7 +16,7 @@ import androidx.lifecycle.Lifecycle
 import com.example.tp1.MainActivity
 import com.example.tp1.PickerRobot
 import com.example.tp1.awaitSources
-import com.example.tp1.extraction.ExtractionArtifacts
+import com.example.tp1.extraction.ExtractionWork
 import com.example.tp1.inference.FinishReason
 import com.example.tp1.inference.ManualInference
 import com.example.tp1.inference.Model
@@ -81,15 +81,15 @@ class ChatModelUiTest {
         compose.onNode(hasText("Explorador") and hasClickAction()).performClick()
         compose.runOnIdle {
             assertEquals(ChatPreparation.Ready, owner.state.value.preparation)
-            val released = ExtractionArtifacts.permit.tryLock()
-            if (released) ExtractionArtifacts.permit.unlock()
+            val released = ExtractionWork.permit.tryLock()
+            if (released) ExtractionWork.permit.unlock()
             assertFalse("Tab switches must retain the model's native memory permit", released)
         }
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         assertEquals(ChatPreparation.Ready, owner.state.value.preparation)
         compose.waitUntil(150_000) { owner.state.value.preparation == ChatPreparation.Unprepared }
-        val released = ExtractionArtifacts.permit.tryLock()
-        if (released) ExtractionArtifacts.permit.unlock()
+        val released = ExtractionWork.permit.tryLock()
+        if (released) ExtractionWork.permit.unlock()
         assertTrue("Two minutes in background must release the model's native memory permit", released)
     }
 }

@@ -12,6 +12,7 @@ import com.example.tp1.inference.GenerationEvent
 import com.example.tp1.inference.InferenceSession
 import com.example.tp1.inference.Model
 import com.example.tp1.inference.ModelManager
+import com.example.tp1.inference.NativeWorkHandoff
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -63,6 +64,9 @@ internal class ChatViewModel(
     })
     val state = mutableState.asStateFlow()
     private var connection: ChatConnection? = null
+    private var closing: Deferred<Unit>? = null
+    private var releasing: Job? = null
+    private var cleared = false
     private var operation: Job? = null
     private var unloadJob: Job? = null
     private var backgroundedAt: Long? = null
@@ -71,6 +75,11 @@ internal class ChatViewModel(
     private var foreground = false
     private var selected = false
     private val active: Boolean get() = foreground && selected
+    private val nativeOwner = NativeWorkHandoff.ChatOwner(
+        busy = { !cleared && state.value.phase != ChatPhase.Idle && state.value.preparation != ChatPreparation.Closing },
+        yield = { yieldForIndexing() }, resume = { prepare() })
+
+    init { NativeWorkHandoff.register(nativeOwner) }
 
     fun editDraft(value: String) {
         if (value.length > MAX_DRAFT_LENGTH) {
@@ -113,7 +122,7 @@ internal class ChatViewModel(
     }
 
     fun prepare() {
-        if (!active || state.value.busy || connection != null) return
+        if (cleared || NativeWorkHandoff.blocked || !active || state.value.busy || connection != null) return
         val ticket = ++epoch
         mutableState.value = state.value.copy(preparation = ChatPreparation.Acquiring, problem = keepDraftError(null))
         startOperation {
@@ -142,12 +151,12 @@ internal class ChatViewModel(
     }
 
     fun send() {
-        if (!active || !state.value.canSend) return
+        if (NativeWorkHandoff.blocked || !active || !state.value.canSend) return
         generate(state.value.draft, retry = false)
     }
 
     fun retry() {
-        if (!active || state.value.busy || connection == null) return
+        if (NativeWorkHandoff.blocked || !active || state.value.busy || connection == null) return
         val turn = state.value.turns.lastOrNull()?.takeIf { it.canRetry } ?: return
         generate(turn.input, retry = true)
     }
@@ -231,7 +240,9 @@ internal class ChatViewModel(
         if (connection == null && operation?.isActive != true) return
         val ticket = ++epoch
         val previous = operation
+        releasing = previous
         val closed = connection?.closeAsync()
+        closing = closed
         connection = null
         previous?.cancel()
         mutableState.value = state.value.copy(preparation = ChatPreparation.Closing,
@@ -240,13 +251,17 @@ internal class ChatViewModel(
             })
         startOperation {
             try {
-                previous?.join()
-                closed?.await()
+                withContext(NonCancellable) {
+                    previous?.join()
+                    closed?.await()
+                }
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
                 Log.w("TP1Chat", "Chat cleanup failed", error)
             } finally {
+                if (closing === closed && closed?.isCompleted == true) closing = null
+                if (releasing === previous) releasing = null
                 if (ticket == epoch) {
                     mutableState.value = state.value.copy(preparation = ChatPreparation.Unprepared, phase = ChatPhase.Idle)
                     // A foreground return can arrive before native cleanup finishes.
@@ -256,12 +271,50 @@ internal class ChatViewModel(
         }
     }
 
+    /** The handoff has already blocked prepare/send, and never yields an active reply. */
+    private suspend fun yieldForIndexing() {
+        val ticket = ++epoch
+        val previous = operation
+        val pendingRelease = releasing
+        val closed = connection?.closeAsync() ?: closing
+        connection = null
+        closing = closed
+        previous?.cancel()
+        mutableState.value = state.value.copy(preparation = ChatPreparation.Closing, phase = ChatPhase.Idle)
+        try {
+            withContext(NonCancellable) {
+                previous?.join()
+                pendingRelease?.join()
+                closed?.await()
+            }
+        } finally {
+            if (closing === closed && closed?.isCompleted == true) closing = null
+            if (ticket == epoch) {
+                mutableState.value = state.value.copy(preparation = ChatPreparation.Unprepared, phase = ChatPhase.Idle)
+            }
+        }
+    }
+
     override fun onCleared() {
+        cleared = true
         ++epoch
         unloadJob?.cancel()
-        connection?.closeAsync()
+        val previous = operation
+        val pendingRelease = releasing
+        closing = connection?.closeAsync() ?: closing
+        val closed = closing
         connection = null
-        operation?.cancel()
+        previous?.cancel()
+        // Retiring owners still exclude indexing until late loads and native close have finished.
+        viewModelScope.launch(NonCancellable, start = CoroutineStart.UNDISPATCHED) {
+            try {
+                previous?.join()
+                pendingRelease?.join()
+                closed?.await()
+            } catch (_: Exception) {
+                Log.w("TP1Chat", "Retired Chat cleanup failed")
+            } finally { NativeWorkHandoff.unregister(nativeOwner) }
+        }
         super.onCleared()
     }
 }

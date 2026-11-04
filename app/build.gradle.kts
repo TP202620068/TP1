@@ -114,8 +114,8 @@ android {
             optimization {
                 enable = true
                 // The separate test APK calls shared runtime APIs that app-only shrinking can remove.
-                packageScope = if (releaseInstrumentation) setOf("com.example.tp1.extraction.**", "com.example.tp1.inference.**", "com.example.tp1.chat.**")
-                    else setOf("androidx.**", "kotlin.**", "kotlinx.**", "com.example.tp1.extraction.**", "com.example.tp1.inference.**", "com.example.tp1.chat.**")
+                packageScope = if (releaseInstrumentation) setOf("com.example.tp1.extraction.**", "com.example.tp1.inference.**", "com.example.tp1.chat.**", "com.example.tp1.indexing.**")
+                    else setOf("androidx.**", "kotlin.**", "kotlinx.**", "com.example.tp1.extraction.**", "com.example.tp1.inference.**", "com.example.tp1.chat.**", "com.example.tp1.indexing.**")
             }
         }
     }

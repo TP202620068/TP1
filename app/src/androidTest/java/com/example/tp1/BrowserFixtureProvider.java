@@ -78,7 +78,7 @@ public class BrowserFixtureProvider extends DocumentsProvider {
     }
 
     @Override public boolean isChildDocument(String parent, String child) {
-        return parent.equals("root") && CHILDREN.contains(child) || parent.equals("slow") && child.equals("file");
+        return parent.equals("root") && (CHILDREN.contains(child) || child.equals("extract")) || parent.equals("slow") && child.equals("file");
     }
 
     @Override public ParcelFileDescriptor openDocument(String id, String mode, CancellationSignal signal) throws FileNotFoundException {

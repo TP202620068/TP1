@@ -37,7 +37,6 @@ import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
-import org.json.JSONObject
 import org.json.JSONArray
 import org.junit.After
 import org.junit.Assert.*
@@ -94,18 +93,16 @@ class DocumentExtractorTest {
         error("Expected extraction failure")
     }
 
-    @Test fun nativeCsvOfficeAndTextPdfPublishReadableUnicodeAndProvenance() = runBlocking<Unit> {
+    @Test fun nativeCsvOfficeAndTextPdfReturnReadableUnicodeAndInputIdentityWithoutFiles() = runBlocking<Unit> {
         val extractor = DocumentExtractor(context)
         for ((name, expected) in listOf("sample.csv" to "日本語", "sample.rtf" to "TP1 office fixture")) {
             val bytes = instrumentation.context.assets.open("extraction/$name").use { it.readBytes() }
             configure(bytes, name)
-            val artifact = extractor.extract(source, entry)
-            assertTrue(artifact.markdown.readText().contains(expected))
-            val provenance = JSONObject(artifact.provenance.readText())
-            assertEquals(MessageDigest.getInstance("SHA-256").digest(bytes).hex(), provenance.getString("inputSha256"))
-            assertEquals(MessageDigest.getInstance("SHA-256").digest(artifact.markdown.readBytes()).hex(), provenance.getString("markdownSha256"))
-            assertEquals(source.record.uri, provenance.getString("sourceUri"))
-            assertTrue(provenance.isNull("observedSize"))
+            val extracted = extractor.extract(source, entry)
+            assertTrue(extracted.markdown.contains(expected))
+            assertEquals(MessageDigest.getInstance("SHA-256").digest(bytes).hex(), extracted.inputSha256)
+            assertEquals(name, extracted.displayName)
+            assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
         }
         val pdf = PdfDocument()
         val bytes = try {
@@ -116,14 +113,11 @@ class DocumentExtractorTest {
         } finally { pdf.close() }
         configure(bytes, "suffixless", "application/pdf")
         repeat(3) {
-            val artifact = extractor.extract(source, entry)
-            assertTrue(artifact.markdown.readText().contains("TP1 text PDF fixture"))
-            assertEquals("pdf", JSONObject(artifact.provenance.readText()).getString("format"))
+            assertTrue(extractor.extract(source, entry).markdown.contains("TP1 text PDF fixture"))
         }
-        val previous = ExtractionArtifacts.current(context, source, entry)
         configure("Unsupported fixture".toByteArray(), "unsupported.bin", "application/octet-stream")
         assertEquals("unsupported", failure { extractor.extract(source, entry) }.code)
-        assertEquals(previous, ExtractionArtifacts.current(context, source, entry))
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
     }
 
     @Test fun nativeMixedPdfRequiresOcrWithOneBasedPageNumbers() = runBlocking<Unit> {
@@ -148,15 +142,14 @@ class DocumentExtractorTest {
         assertEquals("needsOcr", error.code)
         assertEquals(2L, error.pageCount)
         assertArrayEquals(longArrayOf(2), error.ocrPages)
-        assertNull(ExtractionArtifacts.current(context, source, entry))
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
     }
 
     @Test @ManualInference fun extractedMarkdownChunksAndEmbedsWithExactTokenReport() = runBlocking<Unit> {
         val rtf = "{\\rtf1\\ansi " +
             "The laptop warranty lasts two years from purchase. Keep the receipt for repairs.\\par ".repeat(30) + "}"
         configure(rtf.toByteArray(), "chunking.rtf", "application/rtf")
-        val artifact = DocumentExtractor(context).extract(source, entry)
-        val markdown = artifact.markdown.readText(Charsets.UTF_8)
+        val markdown = DocumentExtractor(context).extract(source, entry).markdown
         assertTrue(markdown.contains("warranty"))
         val session = EmbeddingSession.open(ModelManager(context))
         try {
@@ -182,15 +175,15 @@ class DocumentExtractorTest {
             }
             assertEquals("resourceLimit", failure { extractor.extract(source, entry) }.code)
         }
-        val artifact = DocumentExtractor(context, ExtractionLimits(bytes.size.toLong(), 100)) { _, hint, output, _ ->
+        val extracted = DocumentExtractor(context, ExtractionLimits(bytes.size.toLong(), 100)) { _, hint, output, _ ->
             assertEquals("csv", hint)
             success(output)
         }.extract(source, entry)
-        assertEquals(bytes.size.toLong(), JSONObject(artifact.provenance.readText()).getLong("inputBytes"))
-        assertTrue(ExtractionArtifacts.operations(context).listFiles().orEmpty().isEmpty())
+        assertEquals(MessageDigest.getInstance("SHA-256").digest(bytes).hex(), extracted.inputSha256)
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
     }
 
-    @Test fun failuresAndOversizedOutputPreservePreviousGeneration() = runBlocking<Unit> {
+    @Test fun failuresAndOversizedOutputLeaveNoTemporaryFiles() = runBlocking<Unit> {
         val original = DocumentExtractor(context) { _, _, output, _ -> success(output, "Previous valid text") }.extract(source, entry)
         val ocr = DocumentExtractor(context) { _, _, _, _ -> NativeConversion("needsOcr", "Scanned pages", "pdf", longArrayOf(1, 3), 4) }
         val error = failure { ocr.extract(source, entry) }
@@ -198,9 +191,8 @@ class DocumentExtractorTest {
         assertEquals(4L, error.pageCount)
         val oversized = DocumentExtractor(context, ExtractionLimits(outputBytes = 1)) { _, _, output, _ -> success(output) }
         assertEquals("resourceLimit", failure { oversized.extract(source, entry) }.code)
-        assertEquals(original, ExtractionArtifacts.current(context, source, entry))
-        assertEquals("Previous valid text", original.markdown.readText())
-        assertTrue(ExtractionArtifacts.operations(context).listFiles().orEmpty().isEmpty())
+        assertEquals("Previous valid text", original.markdown)
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
     }
 
     @Test fun cancellationDuringCopyClosesProviderAndNeverCallsNative() = runBlocking<Unit> {
@@ -210,11 +202,11 @@ class DocumentExtractorTest {
         val job = async(Dispatchers.IO) { extractor.extract(source, entry) }
         try {
             withTimeout(5_000) {
-                while (ExtractionArtifacts.operations(context).listFiles().orEmpty().none { File(it, "input").length() > 0 }) delay(10)
+                while (ExtractionWork.operations(context).listFiles().orEmpty().none { File(it, "input").length() > 0 }) delay(10)
             }
         } finally { job.cancelAndJoin() }
         assertFalse(called.get())
-        assertTrue(ExtractionArtifacts.operations(context).listFiles().orEmpty().isEmpty())
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
     }
 
     @Test fun cancellingNativeKeepsInputAndSerializationUntilReturn() = runBlocking<Unit> {
@@ -240,7 +232,7 @@ class DocumentExtractorTest {
             assertFalse(secondEntered.await(150, TimeUnit.MILLISECONDS))
             release.countDown()
             first.join()
-            assertEquals("New result", second.await().markdown.readText())
+            assertEquals("New result", second.await().markdown)
             assertFalse(input.get().exists())
         } finally {
             release.countDown()
@@ -248,12 +240,13 @@ class DocumentExtractorTest {
         }
     }
 
-    @Test fun sourceRemovalDeletesArtifactsAndReaddCannotReviveRunningResult() = runBlocking<Unit> {
-        val original = DocumentExtractor(context) { _, _, output, _ -> success(output) }.extract(source, entry)
+    @Test fun sourceRemovalAndReaddRejectRunningExtractionWithoutDeletingItsNativeInput() = runBlocking<Unit> {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
+        val input = AtomicReference<File>()
         val pending = async(Dispatchers.IO) {
-            DocumentExtractor(context) { _, _, output, _ ->
+            DocumentExtractor(context) { staged, _, output, _ ->
+                input.set(staged)
                 entered.countDown()
                 check(release.await(5, TimeUnit.SECONDS))
                 success(output, "Stale result")
@@ -262,11 +255,12 @@ class DocumentExtractorTest {
         try {
             assertTrue(entered.await(5, TimeUnit.SECONDS))
             store.remove(store.restore().sources, source.record.uri)
-            assertFalse(original.markdown.exists())
+            assertTrue(input.get().isFile)
             select(configure())
             release.countDown()
             try { pending.await(); fail("Removed source result was published") } catch (_: CancellationException) { }
-            assertNull(ExtractionArtifacts.current(context, source, entry))
+            assertFalse(input.get().exists())
+            assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
         } finally {
             release.countDown()
             pending.cancelAndJoin()
@@ -287,32 +281,26 @@ class DocumentExtractorTest {
             success(output, "Unauthorized result")
         }
         try { revoked.extract(source, entry); fail("Revoked source result was published") } catch (_: SecurityException) { }
-        assertTrue(original.markdown.isFile)
-        assertEquals("Completed Markdown", original.markdown.readText())
+        assertEquals("Completed Markdown", original.markdown)
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
         assertThrows(SecurityException::class.java) { browser.openRead(source, entry) }
     }
 
-    @Test fun failedArtifactDeletionCannotExposeOldGenerationForSavedSource() = runBlocking<Unit> {
-        val original = DocumentExtractor(context) { _, _, output, _ -> success(output, "Retired text") }.extract(source, entry)
-        ExtractionArtifacts.removed(context, source.record.uri) { false }
-        assertTrue(original.markdown.isFile)
-        // The URI is still saved and readable, as after re-addition. Disk invalidation must hide old content.
-        assertNull(ExtractionArtifacts.current(context, source, entry))
-        val marker = File(context.noBackupFilesDir, "extraction-v1/invalidated/" +
-            MessageDigest.getInstance("SHA-256").digest(source.record.uri.toByteArray()).hex())
-        assertTrue(marker.isFile)
-        val fresh = DocumentExtractor(context) { _, _, output, _ -> success(output, "Fresh text") }.extract(source, entry)
-        assertFalse(original.markdown.exists())
-        assertFalse(marker.exists())
-        assertEquals("Fresh text", fresh.markdown.readText())
-        assertEquals(fresh, ExtractionArtifacts.current(context, source, entry))
+    @Test fun malformedUtf8OutputIsRejectedAndCleaned() = runBlocking<Unit> {
+        try {
+            DocumentExtractor(context) { _, _, output, _ ->
+                output.writeBytes(byteArrayOf(0xc3.toByte(), 0x28))
+                NativeConversion("ok", "", "csv", longArrayOf(), 0)
+            }.extract(source, entry)
+            fail("Malformed Markdown accepted")
+        } catch (_: java.nio.charset.CharacterCodingException) { }
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
     }
 
-    @Test fun uncertainRemovalWithUnknownRecordsCannotReviveOldArtifacts() = runBlocking<Unit> {
-        val original = DocumentExtractor(context) { _, _, output, _ -> success(output, "Retired text") }.extract(source, entry)
+    @Test fun uncertainRemovalWithUnknownRecordsRequiresFreshAuthorizedExtraction() = runBlocking<Unit> {
         val file = File(context.filesDir, "sources.json")
         val saved = file.readText()
-        val unknown = JSONObject().put("future", "preserve")
+        val unknown = org.json.JSONObject().put("future", "preserve")
         var failAfterCommit = false
         var failRead = false
         val storage = object : AtomicFile(file) {
@@ -336,15 +324,26 @@ class DocumentExtractorTest {
             assertTrue(restored.damagedRecords)
             assertFalse(restored.sources.any { it.record.uri == source.record.uri })
             select(configure())
-            assertNull(ExtractionArtifacts.current(context, source, entry))
-            assertFalse(original.markdown.exists())
             val records = JSONArray(file.readText())
             assertEquals("preserve", records.getJSONObject(records.length() - 1).getString("future"))
             val fresh = DocumentExtractor(context) { _, _, output, _ -> success(output, "Fresh text") }.extract(source, entry)
-            assertEquals("Fresh text", fresh.markdown.readText())
+            assertEquals("Fresh text", fresh.markdown)
         } finally {
             file.writeText(saved)
         }
+    }
+
+    @Test fun startupRetiresObsoleteCacheAndAbandonedTemporaryFiles() {
+        val legacy = File(context.noBackupFilesDir, "extraction-v1/fixture").apply { mkdirs() }
+        File(legacy, "document.md").writeText("Obsolete derived text")
+        File(legacy, "provenance.json").writeText("{}")
+        val abandoned = File(ExtractionWork.operations(context), "abandoned").apply { mkdirs() }
+        File(abandoned, "output").writeText("Interrupted output")
+        val initialized = ExtractionWork.javaClass.getDeclaredField("initialized").apply { isAccessible = true }
+        initialized.setBoolean(ExtractionWork, false)
+        store.restore()
+        assertFalse(legacy.parentFile!!.exists())
+        assertFalse(abandoned.exists())
     }
 
     @Test fun providerNamesCannotChooseStagingPathsOrPassUnsafeHints() = runBlocking<Unit> {
@@ -352,7 +351,7 @@ class DocumentExtractorTest {
             configure(name = name)
             DocumentExtractor(context) { input, hint, output, _ ->
                 assertEquals("input", input.name)
-                assertEquals("document.md", output.name)
+                assertEquals("output", output.name)
                 assertEquals(expected, hint)
                 success(output)
             }.extract(source, entry)

@@ -87,7 +87,7 @@ internal suspend fun reportChunkTokens(
     val sideTarget = minOf(16, limit / 16)
     val coreTarget = minOf(224, limit - 2 * sideTarget)
     val target = coreTarget + 2 * sideTarget
-    report("$label: recipe=markdown-token-v2 coreTarget=$coreTarget sideTarget=$sideTarget; exact counts include Document: and EOS; growth adds left then right")
+    report("$label: coreTarget=$coreTarget sideTarget=$sideTarget; exact counts include Document: and EOS; growth adds left then right")
     chunks.forEachIndexed { index, chunk ->
         val core = session.countDocumentTokens(String(source.copyOfRange(chunk.coreStartByte, chunk.coreEndByte), Charsets.UTF_8))
         val withLeft = session.countDocumentTokens(String(source.copyOfRange(chunk.startByte, chunk.coreEndByte), Charsets.UTF_8))

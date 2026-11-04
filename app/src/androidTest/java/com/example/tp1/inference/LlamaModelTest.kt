@@ -3,7 +3,7 @@ package com.example.tp1.inference
 import androidx.test.platform.app.InstrumentationRegistry
 import android.os.SystemClock
 import android.util.Log
-import com.example.tp1.extraction.ExtractionArtifacts
+import com.example.tp1.extraction.ExtractionWork
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
 import kotlinx.coroutines.CancellationException
@@ -42,7 +42,7 @@ class LlamaModelTest {
         val engine = LlamaEngine(context)
         try {
             engine.load()
-            assertFalse("Loaded model must exclude parsing", ExtractionArtifacts.permit.tryLock())
+            assertFalse("Loaded model must exclude parsing", ExtractionWork.permit.tryLock())
             assertEquals("<|im_start|>system\nYou are helpful.<|im_end|>\n<|im_start|>user\nHi<|im_end|>\n<|im_start|>assistant\n",
                 engine.formatPrompt("You are helpful.", "Hi"))
             repeat(2) {
@@ -67,8 +67,8 @@ class LlamaModelTest {
                 engine.reset()
             }
             engine.unload()
-            assertTrue(ExtractionArtifacts.permit.tryLock())
-            ExtractionArtifacts.permit.unlock()
+            assertTrue(ExtractionWork.permit.tryLock())
+            ExtractionWork.permit.unlock()
             engine.load()
             assertTrue(terminal(engine.generate("", "Say hello", 1, 42).toList()).reason in setOf(FinishReason.EOG, FinishReason.LENGTH))
         } finally { engine.closeAsync().await() }
@@ -148,15 +148,15 @@ class LlamaModelTest {
         try {
             withTimeout(60_000) { queued.await() }
             assertFalse(pending.isCompleted)
-            val availableBeforeCancel = ExtractionArtifacts.permit.tryLock()
-            if (availableBeforeCancel) ExtractionArtifacts.permit.unlock()
+            val availableBeforeCancel = ExtractionWork.permit.tryLock()
+            if (availableBeforeCancel) ExtractionWork.permit.unlock()
             assertFalse("Native load must succeed before cancelling delivery", availableBeforeCancel)
             pending.cancel()
             resume.countDown()
             withTimeout(60_000) { pending.join() }
             assertTrue(pending.isCancelled)
-            val released = ExtractionArtifacts.permit.tryLock()
-            if (released) ExtractionArtifacts.permit.unlock()
+            val released = ExtractionWork.permit.tryLock()
+            if (released) ExtractionWork.permit.unlock()
             assertTrue("Cancelled load must release its permit before returning", released)
             engine.load()
             assertTrue(terminal(engine.generate("", "Hello", 1, 42).toList()).reason in setOf(FinishReason.EOG, FinishReason.LENGTH))

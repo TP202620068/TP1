@@ -2,7 +2,7 @@ package com.example.tp1.inference
 
 import android.util.Base64
 import androidx.test.platform.app.InstrumentationRegistry
-import com.example.tp1.extraction.ExtractionArtifacts
+import com.example.tp1.extraction.ExtractionWork
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -41,8 +41,8 @@ class EmbeddingSessionTest {
         first.indices.sumOf { first[it].toDouble() * second[it] }
 
     private fun assertReleased() {
-        val acquired = ExtractionArtifacts.permit.tryLock()
-        if (acquired) ExtractionArtifacts.permit.unlock()
+        val acquired = ExtractionWork.permit.tryLock()
+        if (acquired) ExtractionWork.permit.unlock()
         assertTrue("Native memory permit leaked", acquired)
     }
 
@@ -230,7 +230,7 @@ class EmbeddingSessionTest {
                 try { pending.await(); fail("Cancelled embedding returned a vector") } catch (_: CancellationException) { }
             } finally { pending.cancelAndJoin() }
             assertEquals(0, engine.phase)
-            assertFalse(ExtractionArtifacts.permit.tryLock())
+            assertFalse(ExtractionWork.permit.tryLock())
             engine.testControl(failDecode = true)
             try { session.embedDocument("Fail this request."); fail("Native failure ignored") }
             catch (error: IOException) { assertTrue(error.message!!.contains("llama_encode")) }
@@ -253,7 +253,7 @@ class EmbeddingSessionTest {
             catch (_: IllegalStateException) { }
             try { InferenceSession.open(models, Model.Test); fail("Chat loaded alongside embeddings") }
             catch (_: IllegalStateException) { }
-            assertFalse(ExtractionArtifacts.permit.tryLock())
+            assertFalse(ExtractionWork.permit.tryLock())
             engine.testControl(pausePhase = 2)
             val pending = async(Dispatchers.IO) { session.embedQuery("Close while processing.") }
             try {

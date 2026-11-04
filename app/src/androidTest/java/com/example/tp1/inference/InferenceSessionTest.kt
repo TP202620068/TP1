@@ -2,7 +2,7 @@ package com.example.tp1.inference
 
 import android.os.SystemClock
 import androidx.test.platform.app.InstrumentationRegistry
-import com.example.tp1.extraction.ExtractionArtifacts
+import com.example.tp1.extraction.ExtractionWork
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.CoroutineContext
@@ -31,8 +31,8 @@ class InferenceSessionTest {
     }
 
     private fun assertReleased() {
-        val released = ExtractionArtifacts.permit.tryLock()
-        if (released) ExtractionArtifacts.permit.unlock()
+        val released = ExtractionWork.permit.tryLock()
+        if (released) ExtractionWork.permit.unlock()
         assertTrue("Native memory permit leaked", released)
     }
 
@@ -52,7 +52,7 @@ class InferenceSessionTest {
                 assertTrue(response.generatedTokens in 1..256)
                 assertTrue(response.incompleteUtf8Bytes in 0..3)
             }
-            assertFalse(ExtractionArtifacts.permit.tryLock())
+            assertFalse(ExtractionWork.permit.tryLock())
         } finally { session.close() }
         assertReleased()
         session.close()
@@ -86,7 +86,7 @@ class InferenceSessionTest {
             try { paused(engine) } finally { withTimeout(60_000) { pending.cancelAndJoin() } }
             assertEquals(0, engine.phase)
             assertTrue(pending.isCancelled)
-            assertFalse(ExtractionArtifacts.permit.tryLock())
+            assertFalse(ExtractionWork.permit.tryLock())
             engine.testControl()
             assertTrue(session.infer("Say hello.").text.isNotBlank())
         } finally { session.close() }
@@ -149,8 +149,8 @@ class InferenceSessionTest {
         val pending = async(dispatcher, start = CoroutineStart.UNDISPATCHED) { InferenceSession.open(models, Model.Test) }
         try {
             withTimeout(60_000) { queued.await() }
-            val available = ExtractionArtifacts.permit.tryLock()
-            if (available) ExtractionArtifacts.permit.unlock()
+            val available = ExtractionWork.permit.tryLock()
+            if (available) ExtractionWork.permit.unlock()
             assertFalse("Load must succeed before cancelling return delivery", available)
             pending.cancel()
             resume.countDown()

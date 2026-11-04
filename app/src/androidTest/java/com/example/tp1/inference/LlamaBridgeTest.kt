@@ -7,7 +7,7 @@ import java.io.IOException
 import kotlinx.coroutines.runBlocking
 import java.net.HttpURLConnection
 import java.security.MessageDigest
-import com.example.tp1.extraction.ExtractionArtifacts
+import com.example.tp1.extraction.ExtractionWork
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -51,8 +51,8 @@ class LlamaBridgeTest {
             try { InferenceSession.open(models, Model.JinaV5NanoRetrieval); fail("Embedding model accepted as chat") }
             catch (_: IllegalArgumentException) { }
             assertFalse(models.isAvailable(Model.Test))
-            val released = ExtractionArtifacts.permit.tryLock()
-            if (released) ExtractionArtifacts.permit.unlock()
+            val released = ExtractionWork.permit.tryLock()
+            if (released) ExtractionWork.permit.unlock()
             assertTrue("Failed open leaked the native memory permit", released)
         } finally { root.deleteRecursively() }
     }
