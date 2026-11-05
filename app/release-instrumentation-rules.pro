@@ -28,6 +28,7 @@
     public static com.example.tp1.extraction.ExtractionWork INSTANCE;
     public java.io.File operations(android.content.Context);
     public kotlinx.coroutines.sync.Mutex getPermit();
+    public java.lang.Object getSourceLock();
 }
 # The restart fixture resets only this process-local initialization guard.
 -keepclassmembers class com.example.tp1.extraction.ExtractionWork { private static boolean initialized; }
@@ -89,6 +90,7 @@
     public <init>(java.io.File, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1);
     public <init>(java.io.File, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, int, kotlin.jvm.internal.DefaultConstructorMarker);
     public java.io.File location$app(com.example.tp1.inference.Model);
+    public com.example.tp1.inference.ModelProfile profile$app(com.example.tp1.inference.Model);
     public java.lang.Object isAvailable(com.example.tp1.inference.Model, kotlin.coroutines.Continuation);
     public java.lang.Object download(com.example.tp1.inference.Model, kotlin.coroutines.Continuation);
 }
@@ -246,7 +248,10 @@
 -keep,allowoptimization class com.example.tp1.indexing.IndexStore$Companion {
     public java.io.File databaseFile(android.content.Context);
 }
--keep,allowoptimization class com.example.tp1.indexing.IndexStore$Candidate { public java.lang.String getGeneration(); }
+-keep,allowoptimization class com.example.tp1.indexing.IndexStore$Candidate {
+    public long getDocumentId();
+    public java.lang.String getGeneration();
+}
 -keep,allowoptimization class com.example.tp1.indexing.IndexStore$Ticket
 -keep,allowoptimization class com.example.tp1.indexing.IndexSnapshot {
     public long getDocumentId();
@@ -255,6 +260,7 @@
     public java.util.List getChunks();
 }
 -keep,allowoptimization class com.example.tp1.indexing.IndexIdentity {
+    public <init>(java.lang.String, java.lang.String, java.lang.String, int);
     public java.lang.String getDisplayName();
     public java.lang.String getInputSha256();
     public java.lang.String getModelSha256();
@@ -269,6 +275,7 @@
 -keep,allowoptimization class com.example.tp1.inference.NativeWorkHandoff {
     public static com.example.tp1.inference.NativeWorkHandoff INSTANCE;
     public boolean getBlocked();
+    public kotlinx.coroutines.sync.Mutex getDocuments();
     public java.lang.Object acquire(java.lang.Object, kotlin.coroutines.Continuation);
     public java.lang.Object release(java.lang.Object, kotlin.coroutines.Continuation);
 }
@@ -276,3 +283,26 @@
     public <init>(java.lang.String, int, int, int, int, int, int);
     public boolean equals(java.lang.Object);
 }
+
+# Retrieval entry points exercised by the separate test APK, not production JNI rules.
+-keep,allowoptimization class com.example.tp1.indexing.DocumentRetriever {
+    public <init>(...);
+    public java.lang.Object retrieve(java.lang.String, int, kotlin.coroutines.Continuation);
+    public static java.lang.Object retrieve$default(com.example.tp1.indexing.DocumentRetriever, java.lang.String, int, kotlin.coroutines.Continuation, int, java.lang.Object);
+}
+-keep,allowoptimization class com.example.tp1.indexing.RetrievalEmbeddings { public <init>(...); }
+-keep,allowoptimization interface com.example.tp1.indexing.RetrievalResult
+-keep,allowoptimization class com.example.tp1.indexing.RetrievalResult$Complete { public java.util.List getMatches(); }
+-keep,allowoptimization class com.example.tp1.indexing.RetrievalResult$Busy { public static com.example.tp1.indexing.RetrievalResult$Busy INSTANCE; }
+-keep,allowoptimization class com.example.tp1.indexing.RetrievalMatch {
+    public java.lang.String getText();
+    public double getScore();
+    public long getDocumentId();
+    public java.lang.String getGeneration();
+    public int getOrdinal();
+    public java.lang.String getDisplayName();
+    public java.lang.String getSourceUri();
+    public java.lang.String getDocumentUri();
+    public boolean equals(java.lang.Object);
+}
+-keep,allowoptimization class com.example.tp1.inference.ModelArtifact { public java.lang.String getSha256(); }

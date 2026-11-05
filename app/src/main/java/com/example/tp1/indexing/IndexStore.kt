@@ -18,8 +18,11 @@ import com.example.tp1.inference.EMBEDDING_DOCUMENT_PREFIX
 import com.example.tp1.inference.EMBEDDING_INPUT_BYTES
 import com.example.tp1.inference.EmbeddingSession
 import com.example.tp1.sources.SelectedSource
+import com.example.tp1.sources.SourceMetadata
+import com.example.tp1.sources.SourceStore
 import java.io.Closeable
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -152,6 +155,63 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
     fun verify(ticket: Ticket) = synchronized(ExtractionWork.sourceLock) {
         val active = active(ticket) ?: throw IOException("Missing active index generation")
         forEachChunk(active) {}
+    }
+
+    private data class SearchDocument(val active: Active, val source: SelectedSource, val entry: BrowserEntry, val eligible: Boolean)
+
+    /** The source lock freezes saved membership and app publications throughout scan/fetch, never native work. */
+    fun search(query: FloatArray, k: Int, modelSha256: String, coroutine: CoroutineContext): List<RetrievalMatch> =
+        synchronized(ExtractionWork.sourceLock) {
+            val ranking = RetrievalRanking(query, k)
+            val sources = SourceStore(context).readForRetrieval().associateBy { it.record.uri }
+            val documents = mutableMapOf<Long, SearchDocument>()
+            val db = helper.readableDatabase
+            db.rawQuery("SELECT * FROM documents WHERE invalidated=0 AND active_generation IS NOT NULL AND model_sha256=? ORDER BY id",
+                arrayOf(modelSha256)).use { cursor ->
+                while (cursor.moveToNext()) {
+                    coroutine.ensureActive()
+                    val source = sources[cursor.text("source_uri")] ?: continue
+                    val active = Active(cursor.long("id"), cursor.text("active_generation"),
+                        cursor.identity().also(::validateIdentity), cursor.int("chunk_count"))
+                    val entry = BrowserEntry(source.record.uri, cursor.text("document_uri"),
+                        SourceMetadata(active.identity.displayName, null, null, null), false)
+                    val document = SearchDocument(active, source, entry, canRead(source, entry))
+                    documents[active.documentId] = document
+                    if (document.eligible) forEachChunk(active) { chunk ->
+                        coroutine.ensureActive()
+                        ranking.offer(active.documentId, active.generation, chunk.ordinal, chunk.vector)
+                    }
+                }
+            }
+            val matches = ranking.ranked().map { winner ->
+                coroutine.ensureActive()
+                val document = documents.getValue(winner.documentId)
+                db.rawQuery("SELECT text FROM chunks WHERE document_id=? AND generation=? AND ordinal=?",
+                    arrayOf(winner.documentId.toString(), winner.generation, winner.ordinal.toString())).use { cursor ->
+                    if (!cursor.moveToFirst()) throw IOException("Missing winning index chunk")
+                    RetrievalMatch(cursor.text("text"), winner.score, winner.documentId, winner.generation, winner.ordinal,
+                        document.active.identity.displayName, document.source.record.uri, document.entry.uri)
+                }
+            }
+            val current = SourceStore(context).readForRetrieval().associateBy { it.record.uri }
+            if (sources.mapValues { it.value.record.kind to it.value.available } != current.mapValues { it.value.record.kind to it.value.available }) {
+                throw IOException("Retrieval source access changed; retry")
+            }
+            for (document in documents.values) {
+                coroutine.ensureActive()
+                if (canRead(current.getValue(document.source.record.uri), document.entry) != document.eligible) {
+                    throw IOException("Retrieval document access changed; retry")
+                }
+            }
+            coroutine.ensureActive()
+            matches
+        }
+
+    private fun canRead(source: SelectedSource, entry: BrowserEntry): Boolean {
+        if (!source.available) return false
+        return try { authorize(source, entry); true }
+        catch (_: SecurityException) { false }
+        catch (_: FileNotFoundException) { false }
     }
 
     private fun forEachChunk(active: Active, consume: (IndexedChunk) -> Unit) {
@@ -355,7 +415,7 @@ internal fun decodeVector(bytes: ByteArray): FloatArray {
     return FloatArray(EmbeddingSession.DIMENSIONS) { buffer.float }.also(::validateVector)
 }
 
-private fun validateVector(vector: FloatArray) {
+internal fun validateVector(vector: FloatArray) {
     if (vector.size != EmbeddingSession.DIMENSIONS || vector.any { !it.isFinite() } ||
         abs(vector.sumOf { it.toDouble() * it } - 1.0) > 1e-5) throw IOException("Invalid normalized index vector")
 }

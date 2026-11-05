@@ -112,7 +112,8 @@ internal class DocumentBrowser(private val resolver: ContentResolver) {
     }
 
     private fun metadata(uri: String, fallback: String): SourceMetadata =
-        (resolver.query(uri.toUri(), columns, null, null, null) ?: throw FileNotFoundException("Document unavailable")).use {
+        (resolver.query(uri.toUri(), columns, null, null, null) ?: throw IOException("No provider cursor")).use {
+            if (it.extras.getString(DocumentsContract.EXTRA_ERROR) != null) throw IOException("Provider error")
             if (!it.moveToFirst()) throw FileNotFoundException()
             it.details(fallback)
         }

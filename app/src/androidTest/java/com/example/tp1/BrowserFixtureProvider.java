@@ -20,6 +20,11 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 // Java keeps these standalone test-APK components independent of TP1's Kotlin runtime.
 public class BrowserFixtureProvider extends DocumentsProvider {
@@ -30,6 +35,18 @@ public class BrowserFixtureProvider extends DocumentsProvider {
     private volatile String extractionMime = "text/csv";
     private volatile long extractionSize = -1;
     private volatile boolean extractionSlow;
+    private static class RetrievalDocument {
+        byte[] bytes;
+        String name;
+        volatile String state = "ready";
+        volatile int missingAfter = Integer.MAX_VALUE;
+        volatile int pauseAt;
+        final AtomicInteger queries = new AtomicInteger();
+        final AtomicInteger opens = new AtomicInteger();
+    }
+    private final Map<String, RetrievalDocument> retrieval = new ConcurrentHashMap<>();
+    private volatile CountDownLatch retrievalEntered = new CountDownLatch(1);
+    private volatile CountDownLatch retrievalRelease = new CountDownLatch(0);
     private static final List<String> CHILDREN = Arrays.asList("slow", "error", "null", "missing-id", "pending", "gone", "file", "sibling", "unviewable");
     @Override public boolean onCreate() { return true; }
 
@@ -40,6 +57,28 @@ public class BrowserFixtureProvider extends DocumentsProvider {
     }
 
     @Override public Cursor queryDocument(String id, String[] projection) {
+        RetrievalDocument document = retrieval.get(id);
+        if (document != null) {
+            int query = document.queries.incrementAndGet();
+            if (query == document.pauseAt) {
+                retrievalEntered.countDown();
+                try { if (!retrievalRelease.await(15, TimeUnit.SECONDS)) throw new IllegalStateException("Fixture query timed out"); }
+                catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new IllegalStateException(error); }
+            }
+            if (document.state.equals("failure")) throw new IllegalStateException("Fixture provider failure");
+            if (document.state.equals("null")) return null;
+            MatrixCursor cursor = new MatrixCursor(new String[] {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
+                Document.COLUMN_MIME_TYPE, Document.COLUMN_SIZE});
+            if (!document.state.equals("missing") && query <= document.missingAfter) {
+                cursor.addRow(new Object[] {id, document.name, document.state.equals("directory") ? Document.MIME_TYPE_DIR : "application/rtf", document.bytes.length});
+            }
+            if (document.state.equals("error")) {
+                Bundle extras = new Bundle();
+                extras.putString(DocumentsContract.EXTRA_ERROR, "Fixture provider error");
+                cursor.setExtras(extras);
+            }
+            return cursor;
+        }
         if (id.equals("extract")) {
             MatrixCursor cursor = new MatrixCursor(new String[] {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
                 Document.COLUMN_MIME_TYPE, Document.COLUMN_SIZE, Document.COLUMN_LAST_MODIFIED});
@@ -78,10 +117,18 @@ public class BrowserFixtureProvider extends DocumentsProvider {
     }
 
     @Override public boolean isChildDocument(String parent, String child) {
-        return parent.equals("root") && (CHILDREN.contains(child) || child.equals("extract")) || parent.equals("slow") && child.equals("file");
+        return parent.equals("root") && (CHILDREN.contains(child) || child.equals("extract") || retrieval.containsKey(child)) || parent.equals("slow") && child.equals("file");
     }
 
     @Override public ParcelFileDescriptor openDocument(String id, String mode, CancellationSignal signal) throws FileNotFoundException {
+        RetrievalDocument document = retrieval.get(id);
+        if (document != null && mode.equals("r")) {
+            document.opens.incrementAndGet();
+            File file = new File(getContext().getCacheDir(), "retrieval-" + id);
+            try (FileOutputStream output = new FileOutputStream(file)) { output.write(document.bytes); }
+            catch (IOException error) { throw new FileNotFoundException(error.toString()); }
+            return ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY);
+        }
         if (id.equals("extract") && mode.equals("r")) {
             byte[] bytes = extractionBytes;
             if (extractionSlow) {
@@ -112,6 +159,40 @@ public class BrowserFixtureProvider extends DocumentsProvider {
 
     @Override public Bundle call(String method, String arg, Bundle extras) {
         Bundle result = new Bundle();
+        if (method.equals("fixture-retrieval")) {
+            if (!arg.matches("r-[a-z0-9-]+")) throw new IllegalArgumentException("Invalid fixture ID");
+            RetrievalDocument document = new RetrievalDocument();
+            document.bytes = extras.getByteArray("bytes");
+            document.name = extras.getString("name", arg + ".rtf");
+            retrieval.put(arg, document);
+            android.net.Uri uri = DocumentsContract.buildDocumentUri("com.example.tp1.test.documents", arg);
+            getContext().grantUriPermission("com.example.tp1", uri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            result.putString("uri", uri.toString());
+            return result;
+        }
+        if (method.equals("fixture-retrieval-control")) {
+            RetrievalDocument document = retrieval.get(arg);
+            document.state = extras.getString("state", "ready");
+            document.missingAfter = extras.getInt("missingAfter", Integer.MAX_VALUE);
+            document.pauseAt = extras.getInt("pauseAt", 0);
+            document.queries.set(0);
+            if (document.pauseAt > 0) {
+                retrievalEntered = new CountDownLatch(1);
+                retrievalRelease = new CountDownLatch(1);
+            }
+            return result;
+        }
+        if (method.equals("fixture-retrieval-release")) { retrievalRelease.countDown(); return result; }
+        if (method.equals("fixture-retrieval-info")) {
+            result.putBoolean("paused", retrievalEntered.getCount() == 0);
+            result.putInt("queries", retrieval.get(arg).queries.get());
+            result.putInt("opens", retrieval.get(arg).opens.get());
+            return result;
+        }
+        if (method.equals("fixture-retrieval-revoke")) {
+            getContext().revokeUriPermission(DocumentsContract.buildDocumentUri("com.example.tp1.test.documents", arg), Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            return result;
+        }
         if (method.equals("fixture-extraction")) {
             extractionBytes = extras.getByteArray("bytes");
             extractionName = extras.getString("name", "fixture.csv");

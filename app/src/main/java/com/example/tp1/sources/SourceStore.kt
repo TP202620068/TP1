@@ -81,6 +81,17 @@ internal class SourceStore(
         readRecords().any { it.uri == record.uri && it.kind == record.kind }
     }
 
+    /** No reconciliation or writes. Only expected access loss becomes unavailable in backend searches. */
+    internal fun readForRetrieval(): List<SelectedSource> = synchronized(ExtractionWork.sourceLock) {
+        val records = readRecords()
+        val grants = retainedReads()
+        records.map { record ->
+            try { inspectReadable(record, grants) }
+            catch (_: SecurityException) { SelectedSource(record, null) }
+            catch (_: FileNotFoundException) { SelectedSource(record, null) }
+        }
+    }
+
     internal fun writeRecords(records: List<SourceRecord>) = synchronized(ExtractionWork.sourceLock) {
         check(readable) { "Restore must succeed before writing" }
         val array = JSONArray()
@@ -191,26 +202,28 @@ internal class SourceStore(
     }
 
     private fun inspect(record: SourceRecord, grants: Set<String>): SelectedSource {
+        return try { inspectReadable(record, grants) }
+        catch (_: Exception) { SelectedSource(record, null) }
+    }
+
+    private fun inspectReadable(record: SourceRecord, grants: Set<String>): SelectedSource {
         if (record.uri !in grants) return SelectedSource(record, null)
-        return try {
-            val uri = record.uri.toUri()
-            val document = if (record.kind == SourceKind.Tree) {
-                DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
-            } else uri
-            val metadata = resolver.query(document, null, null, null, null)?.use { cursor ->
-                if (!cursor.moveToFirst()) return@use null
-                SourceMetadata(
-                    name = cursor.text(Document.COLUMN_DISPLAY_NAME)?.takeIf { it.isNotBlank() }
-                        ?: record.name ?: context.getString(com.example.tp1.R.string.unnamed_source),
-                    mimeType = cursor.text(Document.COLUMN_MIME_TYPE),
-                    size = cursor.number(Document.COLUMN_SIZE)?.takeIf { it >= 0 },
-                    modified = cursor.number(Document.COLUMN_LAST_MODIFIED)?.takeIf { it > 0 }
-                )
-            }
-            SelectedSource(record, metadata)
-        } catch (_: Exception) {
-            SelectedSource(record, null)
+        val uri = record.uri.toUri()
+        val document = if (record.kind == SourceKind.Tree) {
+            DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri))
+        } else uri
+        val metadata = (resolver.query(document, null, null, null, null) ?: throw IOException("No provider cursor")).use { cursor ->
+            if (cursor.extras.getString(DocumentsContract.EXTRA_ERROR) != null) throw IOException("Provider error")
+            if (!cursor.moveToFirst()) return@use null
+            SourceMetadata(
+                name = cursor.text(Document.COLUMN_DISPLAY_NAME)?.takeIf { it.isNotBlank() }
+                    ?: record.name ?: context.getString(com.example.tp1.R.string.unnamed_source),
+                mimeType = cursor.text(Document.COLUMN_MIME_TYPE),
+                size = cursor.number(Document.COLUMN_SIZE)?.takeIf { it >= 0 },
+                modified = cursor.number(Document.COLUMN_LAST_MODIFIED)?.takeIf { it > 0 }
+            )
         }
+        return SelectedSource(record, metadata)
     }
 
     private fun Cursor.text(column: String): String? = getColumnIndex(column).let {
