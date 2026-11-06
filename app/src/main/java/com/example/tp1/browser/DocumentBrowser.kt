@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ContentResolver
 import android.content.Intent
 import android.database.Cursor
+import android.database.sqlite.SQLiteException
 import android.provider.DocumentsContract
 import android.provider.DocumentsContract.Document
 import android.webkit.MimeTypeMap
@@ -35,7 +36,8 @@ internal class DocumentBrowser(private val resolver: ContentResolver) {
         )
     }
 
-    fun children(source: SelectedSource, folder: BrowserFolder): DirectoryListing {
+    fun children(source: SelectedSource, folder: BrowserFolder, checkActive: () -> Unit = {}): DirectoryListing = providerCall {
+        checkActive()
         requireRead(source)
         require(source.record.kind == SourceKind.Tree)
         val tree = source.record.uri.toUri()
@@ -44,10 +46,11 @@ internal class DocumentBrowser(private val resolver: ContentResolver) {
         if (info.mimeType != null && info.mimeType != Document.MIME_TYPE_DIR) throw FileNotFoundException()
         val children = DocumentsContract.buildChildDocumentsUriUsingTree(tree, DocumentsContract.getDocumentId(document))
         val cursor = resolver.query(children, columns, null, null, null) ?: throw IOException("No provider cursor")
-        return cursor.use { it ->
+        cursor.use { it ->
             if (it.extras.getString(DocumentsContract.EXTRA_ERROR) != null) throw IOException("Provider error")
             val entries = buildList {
                 while (it.moveToNext()) {
+                    checkActive()
                     val id = it.text(Document.COLUMN_DOCUMENT_ID)?.takeIf(String::isNotBlank)
                         ?: throw IOException("Missing document identity")
                     val details = it.details()
@@ -60,7 +63,7 @@ internal class DocumentBrowser(private val resolver: ContentResolver) {
         }
     }
 
-    fun viewIntent(source: SelectedSource, entry: BrowserEntry): Intent {
+    fun viewIntent(source: SelectedSource, entry: BrowserEntry): Intent = providerCall {
         requireRead(source)
         require(entry.sourceUri == source.record.uri && !entry.directory)
         // A document selection never authorizes another document, even with a similar URI.
@@ -73,28 +76,31 @@ internal class DocumentBrowser(private val resolver: ContentResolver) {
             ?: resolver.getType(uri)?.takeIf { it.isNotBlank() }
             ?: MimeTypeMap.getSingleton().getMimeTypeFromExtension(details.name.substringAfterLast('.', "").lowercase(Locale.ROOT))
             ?: "application/octet-stream"
-        return Intent(Intent.ACTION_VIEW).apply {
+        Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, mime)
             clipData = ClipData.newRawUri(details.name, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
     }
 
-    fun openRead(source: SelectedSource, entry: BrowserEntry): AuthorizedDocument {
+    fun openRead(source: SelectedSource, entry: BrowserEntry): AuthorizedDocument = providerCall {
         val details = authorize(source, entry)
         val stream = resolver.openInputStream(authorizedDocument(source, entry.uri)) ?: throw FileNotFoundException("Document unavailable")
-        return AuthorizedDocument(details, stream)
+        AuthorizedDocument(details, stream)
     }
 
     /** Checks provider scope and identity without reading or hashing document contents. */
-    fun authorize(source: SelectedSource, entry: BrowserEntry): SourceMetadata {
+    fun authorize(source: SelectedSource, entry: BrowserEntry): SourceMetadata = providerCall {
         requireRead(source)
         if (entry.sourceUri != source.record.uri || entry.directory) throw SecurityException("Invalid document selection")
         val uri = authorizedDocument(source, entry.uri)
         val details = metadata(uri.toString(), entry.metadata.name)
         if (details.mimeType == Document.MIME_TYPE_DIR) throw FileNotFoundException("Cannot extract a directory")
-        return details
+        details
     }
+
+    private inline fun <T> providerCall(block: () -> T): T = try { block() }
+    catch (error: SQLiteException) { throw IOException("Document provider database failure", error) }
 
     private fun requireRead(source: SelectedSource) {
         if (!source.available || resolver.persistedUriPermissions.none {

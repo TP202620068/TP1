@@ -14,9 +14,10 @@ import java.io.IOException
 import androidx.core.net.toUri
 import com.example.tp1.extraction.ExtractionWork
 import com.example.tp1.indexing.IndexStore
+import com.example.tp1.indexing.IndexingCoordinator
 
 internal data class SourceLoad(val sources: List<SelectedSource>, val damagedRecords: Boolean)
-internal data class SourceUpdate(val sources: List<SelectedSource>, val rejected: Boolean)
+internal data class SourceUpdate(val sources: List<SelectedSource>, val rejected: Boolean, val accepted: List<SelectedSource>)
 
 /** One caller serializes operations, all on Dispatchers.IO. No document contents are read. */
 internal class SourceStore(
@@ -131,6 +132,7 @@ internal class SourceStore(
         val next = existing.toMutableList()
         var rejected = false
         var changed = false
+        val accepted = mutableListOf<SelectedSource>()
         try {
             for (text in uris.distinct()) {
                 val record = SourceRecord(text, kind)
@@ -147,6 +149,7 @@ internal class SourceStore(
                     check(selected.available)
                     val named = selected.copy(record = record.copy(name = selected.metadata?.name))
                     if (index >= 0) next[index] = named else next += named
+                    accepted += named
                     changed = true
                 } catch (_: Exception) {
                     rejected = true
@@ -160,13 +163,14 @@ internal class SourceStore(
         // Release only grants acquired by this operation that did not become saved sources.
         acquired.filter { uri -> next.none { it.record.uri == uri && it.available } }
             .forEach(::releaseRead)
-        return SourceUpdate(next, rejected)
+        return SourceUpdate(next, rejected, accepted)
     }
 
     fun remove(existing: List<SelectedSource>, uri: String): List<SelectedSource> = synchronized(ExtractionWork.sourceLock) {
         check(readable) { "Restore must succeed before changing sources" }
         val next = existing.filterNot { it.record.uri == uri }
         if (managesArtifacts) {
+            IndexingCoordinator.invalidate(uri)
             ExtractionWork.invalidate(uri)
             IndexStore.invalidate(context, uri)
         }

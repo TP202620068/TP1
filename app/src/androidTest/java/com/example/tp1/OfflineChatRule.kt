@@ -13,6 +13,7 @@ import kotlinx.coroutines.awaitCancellation
 import org.junit.rules.ExternalResource
 
 class OfflineChatRule : ExternalResource() {
+    private val indexing = OfflineIndexingRule()
     private val callback = ActivityLifecycleCallback { activity, stage ->
         if (activity is MainActivity && stage == Stage.CREATED) {
             // Install before onStart so navigation tests never download model weights.
@@ -27,6 +28,7 @@ class OfflineChatRule : ExternalResource() {
     }
 
     override fun before() {
+        indexing.install()
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             ActivityLifecycleMonitorRegistry.getInstance().addLifecycleCallback(callback)
         }
@@ -36,5 +38,6 @@ class OfflineChatRule : ExternalResource() {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(callback)
         }
+        indexing.uninstall()
     }
 }

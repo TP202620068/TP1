@@ -5,7 +5,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.tp1.R
+import com.example.tp1.indexing.IndexingCoordinator
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
@@ -16,6 +19,8 @@ import kotlinx.coroutines.withContext
 internal class SourcesViewModel(application: Application, private val savedState: SavedStateHandle) :
     AndroidViewModel(application) {
     private val store = SourceStore(application)
+    private val coordinator = IndexingCoordinator.get(application)
+    val indexing = coordinator.state
     private val mutex = Mutex()
     private val mutableState = MutableStateFlow(SourceState(
         selecting = savedState["sourceSelectionOpen"] ?: false
@@ -27,7 +32,20 @@ internal class SourcesViewModel(application: Application, private val savedState
     fun refresh() = operation(refresh = true) { restoreSources() }
 
     private suspend fun restoreSources() {
-        val restored = withContext(Dispatchers.IO) { store.restore() }
+        val restored = withContext(Dispatchers.IO) {
+            try {
+                val restored = store.restore()
+                currentCoroutineContext().ensureActive()
+                coordinator.restore(restored.sources)
+                restored
+            }
+            catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (error: Exception) {
+                currentCoroutineContext().ensureActive()
+                coordinator.restoreError()
+                throw error
+            }
+        }
         publish(state.value.copy(
             restoring = false,
             storageReady = true,
@@ -42,7 +60,9 @@ internal class SourcesViewModel(application: Application, private val savedState
         if (uris.isEmpty()) return
         operation {
             check(state.value.storageReady)
-            val update = withContext(Dispatchers.IO) { store.add(state.value.sources, uris, kind, flags) }
+            val update = withContext(Dispatchers.IO) {
+                store.add(state.value.sources, uris, kind, flags).also { coordinator.admit(it.accepted) }
+            }
             publish(state.value.copy(
                 sources = update.sources,
                 message = if (update.rejected) R.string.source_could_not_save else null
@@ -62,6 +82,11 @@ internal class SourcesViewModel(application: Application, private val savedState
     }
 
     fun pickerUnavailable() = publish(state.value.copy(message = R.string.source_picker_unavailable))
+
+    fun retryIndexing(uri: String) = operation(refresh = true) {
+        restoreSources()
+        coordinator.retry(uri)
+    }
 
     private fun publish(value: SourceState) {
         savedState["sourceSelectionOpen"] = value.selecting

@@ -52,25 +52,30 @@ internal class DocumentExtractor(
             ExtractionWork.checkCurrent(context, ticket)
             operationContext.ensureActive()
             val operation = File(ExtractionWork.operations(context), UUID.randomUUID().toString())
-            if (!operation.mkdirs()) throw IOException("Cannot create extraction staging directory")
+            if (!operation.mkdirs()) throw ExtractionFailure("storage", "Cannot create extraction staging directory")
             try {
                 val input = File(operation, "input")
                 val output = File(operation, "output")
                 val inputHash = MessageDigest.getInstance("SHA-256")
                 var inputBytes = 0L
                 val metadata = browser.openRead(source, entry).use { document ->
-                    FileOutputStream(input).use { staging ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        while (true) {
-                            operationContext.ensureActive()
-                            val count = document.stream.read(buffer)
-                            if (count < 0) break
-                            if (count.toLong() > limits.inputBytes - inputBytes) {
-                                throw ExtractionFailure("resourceLimit", "Input exceeds app byte limit")
+                    localStorage {
+                        FileOutputStream(input).use { staging ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            while (true) {
+                                operationContext.ensureActive()
+                                val count = try { document.stream.read(buffer) }
+                                catch (error: IOException) {
+                                    throw ExtractionFailure("io", "Cannot read provider document").apply { initCause(error) }
+                                }
+                                if (count < 0) break
+                                if (count.toLong() > limits.inputBytes - inputBytes) {
+                                    throw ExtractionFailure("resourceLimit", "Input exceeds app byte limit")
+                                }
+                                staging.write(buffer, 0, count)
+                                inputHash.update(buffer, 0, count)
+                                inputBytes += count
                             }
-                            staging.write(buffer, 0, count)
-                            inputHash.update(buffer, 0, count)
-                            inputBytes += count
                         }
                     }
                     document.metadata
@@ -85,7 +90,7 @@ internal class DocumentExtractor(
                 if (result.code != "ok") throw ExtractionFailure(result.code, result.detail, result.format, result.ocrPages, result.pageCount)
                 if (result.format == null || !output.isFile) throw ExtractionFailure("native", "Conversion returned an incomplete result")
                 if (output.length() > limits.outputBytes) throw ExtractionFailure("resourceLimit", "Markdown exceeds app byte limit")
-                val bytes = output.inputStream().use { it.readNBytes(limits.outputBytes.toInt() + 1) }
+                val bytes = localStorage { output.inputStream().use { it.readNBytes(limits.outputBytes.toInt() + 1) } }
                 if (bytes.size.toLong() > limits.outputBytes) throw ExtractionFailure("resourceLimit", "Markdown exceeds app byte limit")
                 val markdown = Charsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
                     .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString()
@@ -98,6 +103,12 @@ internal class DocumentExtractor(
         }
     }
 
+}
+
+private inline fun <T> localStorage(block: () -> T): T = try { block() }
+catch (error: ExtractionFailure) { throw error }
+catch (error: IOException) {
+    throw ExtractionFailure("storage", "Cannot access extraction storage").apply { initCause(error) }
 }
 
 internal fun ByteArray.hex(): String = joinToString("") { "%02x".format(it.toInt() and 0xff) }

@@ -35,6 +35,7 @@ internal fun SourceFlow(
     val state by viewModel.state.collectAsState()
     val browsing by browser.state.collectAsState()
     val chatting by chat.state.collectAsState()
+    val indexing by viewModel.indexing.collectAsState()
     val shellState = rememberSaveableStateHolder()
     LaunchedEffect(state.sources, state.restoring) {
         if (!state.restoring) browser.setSources(state.sources)
@@ -55,7 +56,9 @@ internal fun SourceFlow(
                     onPick = onPick,
                     onRemove = viewModel::remove,
                     onClose = viewModel::closeSelection,
-                    onRetry = { viewModel.refresh() }
+                    onRetry = { viewModel.refresh() },
+                    indexing = indexing,
+                    onRetryIndexing = viewModel::retryIndexing
                 )
             }
             else -> shellState.SaveableStateProvider("shell") {
@@ -79,7 +82,9 @@ internal fun SourceFlow(
                     onRetry = onRefresh,
                     onMessageDismissed = browser::dismissMessage,
                     onAddSource = viewModel::selectSources,
-                    sourceMessage = state.message?.let { stringResource(it) }
+                    sourceMessage = state.message?.let { stringResource(it) },
+                    indexing = indexing,
+                    onRetryIndexing = viewModel::retryIndexing
                 )
             }
         }

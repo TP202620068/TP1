@@ -35,6 +35,7 @@ import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.browser.BrowserState
 import com.example.tp1.browser.BrowserProblem
 import com.example.tp1.chat.ChatState
+import com.example.tp1.indexing.IndexingState
 import com.example.tp1.ui.screens.ChatComposer
 import com.example.tp1.ui.screens.ChatScreen
 import com.example.tp1.ui.screens.ExplorerScreen
@@ -59,7 +60,9 @@ internal fun TP1App(
     onChatPrepare: () -> Unit = {},
     onChatSend: () -> Unit = {},
     onChatStop: () -> Unit = {},
-    onChatRetry: () -> Unit = {}
+    onChatRetry: () -> Unit = {},
+    indexing: IndexingState = IndexingState(),
+    onRetryIndexing: (String) -> Unit = {}
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(initialTab) }
     var query by rememberSaveable { mutableStateOf("") }
@@ -131,7 +134,9 @@ internal fun TP1App(
                     browser = browser,
                     onEntryClick = onEntryClick,
                     onAncestor = onAncestor,
-                    onRetry = onRetry
+                    onRetry = onRetry,
+                    indexing = indexing,
+                    onRetryIndexing = onRetryIndexing
                 )
                 AppTab.Chat -> ChatScreen(state = chat, contentPadding = padding, onRetry = onChatRetry)
             }

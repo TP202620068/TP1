@@ -45,6 +45,8 @@ public class BrowserFixtureProvider extends DocumentsProvider {
         final AtomicInteger opens = new AtomicInteger();
     }
     private final Map<String, RetrievalDocument> retrieval = new ConcurrentHashMap<>();
+    private final Map<String, List<String>> indexFolders = new ConcurrentHashMap<>();
+    private final Map<String, String> indexFolderStates = new ConcurrentHashMap<>();
     private volatile CountDownLatch retrievalEntered = new CountDownLatch(1);
     private volatile CountDownLatch retrievalRelease = new CountDownLatch(0);
     private static final List<String> CHILDREN = Arrays.asList("slow", "error", "null", "missing-id", "pending", "gone", "file", "sibling", "unviewable");
@@ -66,6 +68,7 @@ public class BrowserFixtureProvider extends DocumentsProvider {
                 catch (InterruptedException error) { Thread.currentThread().interrupt(); throw new IllegalStateException(error); }
             }
             if (document.state.equals("failure")) throw new IllegalStateException("Fixture provider failure");
+            if (document.state.equals("sqlite")) throw new android.database.sqlite.SQLiteException("Fixture provider database failure");
             if (document.state.equals("null")) return null;
             MatrixCursor cursor = new MatrixCursor(new String[] {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME,
                 Document.COLUMN_MIME_TYPE, Document.COLUMN_SIZE});
@@ -91,6 +94,16 @@ public class BrowserFixtureProvider extends DocumentsProvider {
 
     @Override public Cursor queryChildDocuments(String id, String[] projection, String sortOrder) throws FileNotFoundException {
         visited.add(id);
+        if (indexFolders.containsKey(id)) {
+            String state = indexFolderStates.get(id);
+            if ("failure".equals(state)) throw new IllegalStateException("Fixture subtree failure");
+            if ("null".equals(state)) return null;
+            MatrixCursor cursor = rows(indexFolders.get(id));
+            Bundle extras = new Bundle();
+            extras.putBoolean(DocumentsContract.EXTRA_LOADING, "pending".equals(state));
+            cursor.setExtras(extras);
+            return cursor;
+        }
         if (id.equals("root")) return rows(CHILDREN);
         if (id.equals("slow")) { SystemClock.sleep(1200); return rows(Collections.singletonList("file")); }
         if (id.equals("null")) return null;
@@ -110,13 +123,24 @@ public class BrowserFixtureProvider extends DocumentsProvider {
 
     private MatrixCursor rows(List<String> ids) {
         MatrixCursor cursor = new MatrixCursor(new String[] {Document.COLUMN_DOCUMENT_ID, Document.COLUMN_DISPLAY_NAME, Document.COLUMN_MIME_TYPE});
-        for (String id : ids) cursor.addRow(new Object[] {id, id,
+        for (String id : ids) cursor.addRow(new Object[] {id, retrieval.containsKey(id) ? retrieval.get(id).name : id,
+            retrieval.containsKey(id) ? "application/rtf" :
             id.equals("unviewable") ? "application/x-tp1-no-viewer" :
             id.equals("file") || id.equals("sibling") ? "application/x-tp1-probe" : Document.MIME_TYPE_DIR});
         return cursor;
     }
 
     @Override public boolean isChildDocument(String parent, String child) {
+        if (indexFolders.containsKey(parent)) {
+            List<String> pending = new ArrayList<>(indexFolders.get(parent));
+            java.util.HashSet<String> seen = new java.util.HashSet<>();
+            while (!pending.isEmpty()) {
+                String id = pending.remove(pending.size() - 1);
+                if (id.equals(child)) return true;
+                if (seen.add(id) && indexFolders.containsKey(id)) pending.addAll(indexFolders.get(id));
+            }
+            return false;
+        }
         return parent.equals("root") && (CHILDREN.contains(child) || child.equals("extract") || retrieval.containsKey(child)) || parent.equals("slow") && child.equals("file");
     }
 
@@ -124,6 +148,7 @@ public class BrowserFixtureProvider extends DocumentsProvider {
         RetrievalDocument document = retrieval.get(id);
         if (document != null && mode.equals("r")) {
             document.opens.incrementAndGet();
+            if (document.state.equals("read-failure")) return ParcelFileDescriptor.open(getContext().getCacheDir(), ParcelFileDescriptor.MODE_READ_ONLY);
             File file = new File(getContext().getCacheDir(), "retrieval-" + id);
             try (FileOutputStream output = new FileOutputStream(file)) { output.write(document.bytes); }
             catch (IOException error) { throw new FileNotFoundException(error.toString()); }
@@ -159,6 +184,16 @@ public class BrowserFixtureProvider extends DocumentsProvider {
 
     @Override public Bundle call(String method, String arg, Bundle extras) {
         Bundle result = new Bundle();
+        if (method.equals("fixture-index-folder")) {
+            if (!arg.matches("t-[a-z0-9-]+")) throw new IllegalArgumentException("Invalid fixture folder");
+            indexFolders.put(arg, Arrays.asList(extras.getStringArray("children")));
+            indexFolderStates.put(arg, extras.getString("state", "ready"));
+            android.net.Uri uri = DocumentsContract.buildTreeDocumentUri("com.example.tp1.test.documents", arg);
+            if (extras.getBoolean("root")) getContext().grantUriPermission("com.example.tp1", uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION);
+            result.putString("uri", uri.toString());
+            return result;
+        }
         if (method.equals("fixture-retrieval")) {
             if (!arg.matches("r-[a-z0-9-]+")) throw new IllegalArgumentException("Invalid fixture ID");
             RetrievalDocument document = new RetrievalDocument();

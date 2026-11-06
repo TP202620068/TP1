@@ -10,6 +10,10 @@
 -keep,allowoptimization class com.example.tp1.extraction.DocumentExtractorKt {
     public static java.lang.String hex(byte[]);
 }
+-keepclassmembers,allowoptimization class com.example.tp1.extraction.AnyDocNative {
+    public static com.example.tp1.extraction.AnyDocNative INSTANCE;
+    public com.example.tp1.extraction.NativeConversion convert(java.lang.String, java.lang.String, java.lang.String, com.example.tp1.extraction.ExtractionLimits);
+}
 -keep,allowoptimization class com.example.tp1.extraction.ExtractionLimits { public <init>(...); }
 -keep,allowoptimization class com.example.tp1.extraction.ExtractedDocument {
     public <init>(java.lang.String, java.lang.String, java.lang.String);
@@ -29,6 +33,7 @@
     public java.io.File operations(android.content.Context);
     public kotlinx.coroutines.sync.Mutex getPermit();
     public java.lang.Object getSourceLock();
+    public void requireSavedRead(android.content.Context, com.example.tp1.sources.SourceRecord);
 }
 # The restart fixture resets only this process-local initialization guard.
 -keepclassmembers class com.example.tp1.extraction.ExtractionWork { private static boolean initialized; }
@@ -222,13 +227,15 @@
 
 # The new indexing APIs are roots only for the separately compiled instrumentation APK.
 -keep,allowoptimization class com.example.tp1.indexing.DocumentIndexer {
-    public <init>(...);
+    public <init>(android.content.Context, com.example.tp1.inference.ModelManager, int, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function0);
+    public <init>(android.content.Context, com.example.tp1.inference.ModelManager, int, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function0, int, kotlin.jvm.internal.DefaultConstructorMarker);
     public java.lang.Object index(com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry, boolean, kotlin.coroutines.Continuation);
     public static java.lang.Object index$default(com.example.tp1.indexing.DocumentIndexer, com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
 }
 -keep,allowoptimization class com.example.tp1.indexing.IndexEmbeddings { public <init>(...); }
 -keep,allowoptimization interface com.example.tp1.indexing.IndexResult
 -keep,allowoptimization class com.example.tp1.indexing.IndexResult$Complete {
+    public <init>(long, java.lang.String, int, boolean);
     public long getDocumentId();
     public java.lang.String getGeneration();
     public int getChunks();
@@ -306,3 +313,48 @@
     public boolean equals(java.lang.Object);
 }
 -keep,allowoptimization class com.example.tp1.inference.ModelArtifact { public java.lang.String getSha256(); }
+
+# Automatic indexing uses concrete seams; keep only members called by the separate APK.
+-keep,allowoptimization class com.example.tp1.indexing.IndexingCoordinator {
+    public static com.example.tp1.indexing.IndexingCoordinator$Companion Companion;
+    public <init>(kotlinx.coroutines.CoroutineScope, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function4, kotlin.jvm.functions.Function1);
+    public <init>(kotlinx.coroutines.CoroutineScope, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function4, kotlin.jvm.functions.Function1, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public kotlinx.coroutines.flow.StateFlow getState();
+    public void restore(java.util.List);
+    public void restoreError();
+    public void admit(java.util.List);
+    public void retry(java.lang.String);
+    public void cancelSource(java.lang.String);
+    public java.lang.Object close(kotlin.coroutines.Continuation);
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexingCoordinator$Companion {
+    public com.example.tp1.indexing.IndexingCoordinator get(android.content.Context);
+    public com.example.tp1.indexing.IndexingCoordinator replaceForTests(com.example.tp1.indexing.IndexingCoordinator);
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexingState {
+    public static final int $stable;
+    public <init>(java.util.Map, com.example.tp1.indexing.IndexingProblem);
+    public <init>(java.util.Map, com.example.tp1.indexing.IndexingProblem, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public java.util.Map getSources();
+    public com.example.tp1.indexing.IndexingProblem getBlocked();
+}
+-keep,allowoptimization class com.example.tp1.indexing.SourceIndexingState {
+    public <init>(boolean, int, boolean, boolean, int, java.util.List, boolean, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public boolean getDiscovering();
+    public int getPending();
+    public boolean getRunning();
+    public int getCompleted();
+    public boolean getIncomplete();
+    public boolean getWaitingForChat();
+    public java.util.List getFailures();
+}
+-keep,allowoptimization class com.example.tp1.indexing.IndexingFailure {
+    public <init>(java.lang.String, com.example.tp1.indexing.IndexingProblem);
+    public com.example.tp1.indexing.IndexingProblem getProblem();
+}
+-keep,allowoptimization enum com.example.tp1.indexing.IndexingProblem { public static com.example.tp1.indexing.IndexingProblem *; }
+-keep,allowoptimization class com.example.tp1.indexing.IndexModelFailure { public <init>(java.lang.Exception); }
+-keep,allowoptimization class com.example.tp1.indexing.IndexResult$Busy { public static com.example.tp1.indexing.IndexResult$Busy INSTANCE; }
+-keep,allowoptimization class com.example.tp1.inference.ModelManager {
+    public java.io.File location$app(com.example.tp1.inference.Model);
+}

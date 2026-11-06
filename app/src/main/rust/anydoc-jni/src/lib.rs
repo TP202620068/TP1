@@ -44,6 +44,7 @@ fn detect(bytes: &[u8], hint: Option<&str>) -> Option<Format> {
 
 fn convert(input: &Path, hint: Option<&str>, output: &Path, input_limit: u64, output_limit: u64) -> Conversion {
     let mut format = None;
+    let mut local_file_io = true;
     let result = (|| -> Result<(), ConvertError> {
         let mut bytes = Vec::new();
         File::open(input)?.take(input_limit.saturating_add(1)).read_to_end(&mut bytes)?;
@@ -51,7 +52,10 @@ fn convert(input: &Path, hint: Option<&str>, output: &Path, input_limit: u64, ou
             return Err(ConvertError::ResourceLimit { limit: "input_bytes", detail: "Input exceeds app limit".into() });
         }
         format = detect(&bytes, hint);
+        // Parser I/O is document-specific, not a failure of our staging storage.
+        local_file_io = false;
         let markdown = anydoc::to_markdown_bytes(&bytes, format)?;
+        local_file_io = true;
         if markdown.len() as u64 > output_limit {
             return Err(ConvertError::ResourceLimit { limit: "markdown_bytes", detail: "Markdown exceeds app limit".into() });
         }
@@ -62,7 +66,11 @@ fn convert(input: &Path, hint: Option<&str>, output: &Path, input_limit: u64, ou
     })();
     match result {
         Ok(()) => Conversion { code: "ok", detail: String::new(), format, pages: vec![], page_count: 0 },
-        Err(error) => Conversion::failure(error, format),
+        Err(error) => {
+            let mut failure = Conversion::failure(error, format);
+            if local_file_io && failure.code == "io" { failure.code = "storage"; }
+            failure
+        }
     }
 }
 
@@ -135,8 +143,10 @@ mod tests {
         assert!(!output.exists());
         assert_eq!(convert(&input, Some("csv"), &output, csv.len() as u64, 4096).code, "ok");
         let original = std::fs::read(&output).unwrap();
-        assert_eq!(convert(&input, Some("csv"), &output, csv.len() as u64, 4096).code, "io");
+        assert_eq!(convert(&input, Some("csv"), &output, csv.len() as u64, 4096).code, "storage");
         assert_eq!(std::fs::read(&output).unwrap(), original);
+        assert_eq!(convert(&directory.join("missing"), Some("csv"), &output, csv.len() as u64, 4096).code, "storage");
+        assert_eq!(Conversion::failure(ConvertError::Io(std::io::Error::other("Parser I/O")), Some(Format::Csv)).code, "io");
         std::fs::remove_dir_all(directory).unwrap();
     }
 }

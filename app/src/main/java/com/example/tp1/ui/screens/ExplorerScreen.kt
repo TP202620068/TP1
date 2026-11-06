@@ -47,6 +47,8 @@ import com.example.tp1.ui.components.BrowserBreadcrumbs
 import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.ui.components.FileRow
 import com.example.tp1.ui.components.SectionHeading
+import com.example.tp1.ui.components.IndexingStatus
+import com.example.tp1.indexing.IndexingState
 import com.example.tp1.ui.theme.shellTextFieldColors
 
 @Composable
@@ -60,7 +62,9 @@ internal fun ExplorerScreen(
     browser: BrowserState = BrowserState(),
     onEntryClick: (String) -> Unit = {},
     onAncestor: (Int) -> Unit = {},
-    onRetry: () -> Unit = {}
+    onRetry: () -> Unit = {},
+    indexing: IndexingState = IndexingState(),
+    onRetryIndexing: (String) -> Unit = {}
 ) {
     val focusManager = LocalFocusManager.current
     val searchLabel = stringResource(R.string.search_label)
@@ -104,6 +108,11 @@ internal fun ExplorerScreen(
         if (!browser.atRoots) {
             item(key = "breadcrumbs") {
                 BrowserBreadcrumbs(browser.path, onAncestor)
+            }
+        }
+        if (indexing.sources.isNotEmpty()) {
+            item(key = "indexing-status") {
+                IndexingStatus(indexing, onRetryIndexing, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
             }
         }
         message?.let { text ->

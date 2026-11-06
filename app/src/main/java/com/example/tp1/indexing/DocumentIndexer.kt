@@ -40,7 +40,8 @@ internal class DocumentIndexer(
     private val openEmbeddings: suspend (Int) -> IndexEmbeddings = { limit ->
         val session = EmbeddingSession.open(models, limit)
         IndexEmbeddings(session::chunkDocument, session::embedDocument, session::close)
-    }
+    },
+    private val checkAdmission: () -> Unit = {}
 ) {
     private val context = context.applicationContext
 
@@ -48,11 +49,17 @@ internal class DocumentIndexer(
 
     suspend fun index(source: SelectedSource, entry: BrowserEntry, refresh: Boolean = false): IndexResult =
         withContext(Dispatchers.IO) {
-            IndexStore(context).use { store ->
-                val ticket = store.request(source, entry)
+            val opened = try { IndexStore(context) }
+            catch (error: java.io.IOException) { throw IndexStorageFailure(error) }
+            opened.use { store ->
+                val coroutine = currentCoroutineContext()
+                val ticket = synchronized(ExtractionWork.sourceLock) {
+                    coroutine.ensureActive()
+                    checkAdmission()
+                    store.request(source, entry)
+                }
                 NativeWorkHandoff.documents.withLock {
                     val handoff = Any()
-                    val coroutine = currentCoroutineContext()
                     var embeddings: IndexEmbeddings? = null
                     var candidate: IndexStore.Candidate? = null
                     try {
@@ -80,7 +87,9 @@ internal class DocumentIndexer(
                         if (unchanged != null) return@withLock IndexResult.Complete(
                             unchanged.documentId, unchanged.generation, unchanged.count, unchanged = true)
                         store.checkCurrent(ticket)
-                        embeddings = openEmbeddings(maxInputTokens)
+                        embeddings = try { openEmbeddings(maxInputTokens) }
+                        catch (error: kotlinx.coroutines.CancellationException) { throw error }
+                        catch (error: Exception) { throw IndexModelFailure(error) }
                         val chunks = embeddings.chunk(extracted.markdown)
                         candidate = store.stage(ticket)
                         for ((ordinal, chunk) in chunks.withIndex()) {
@@ -90,7 +99,10 @@ internal class DocumentIndexer(
                             store.append(candidate, ordinal, chunk, vector, maxInputTokens)
                             Log.i("TP1Index", "chunk=$ordinal inputTokens=${chunk.inputTokens}")
                         }
-                        store.publish(candidate, identity, chunks.size, coroutine)
+                        synchronized(ExtractionWork.sourceLock) {
+                            checkAdmission()
+                            store.publish(candidate, identity, chunks.size, coroutine)
+                        }
                         IndexResult.Complete(candidate.documentId, candidate.generation, chunks.size, unchanged = false)
                     } finally {
                         withContext(NonCancellable) {

@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.Lifecycle
 import com.example.tp1.MainActivity
+import com.example.tp1.OfflineIndexingRule
 import com.example.tp1.PickerRobot
 import com.example.tp1.awaitSources
 import com.example.tp1.extraction.ExtractionWork
@@ -30,7 +31,8 @@ import org.junit.Test
 /** Explicit real-model UI proof. Ordinary instrumentation never downloads or loads weights. */
 @ManualInference
 class ChatModelUiTest {
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 0) val offlineIndexing = OfflineIndexingRule()
+    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
     private val picker = PickerRobot()
 
     @After fun cleanUp() = picker.cleanUp()

@@ -286,6 +286,28 @@ class DocumentExtractorTest {
         assertThrows(SecurityException::class.java) { browser.openRead(source, entry) }
     }
 
+    @Test fun localOutputReadFailureIsStorageAndStillCleansStaging() = runBlocking<Unit> {
+        val error = failure {
+            DocumentExtractor(context) { _, _, output, _ ->
+                success(output).also { check(output.setReadable(false, false)) }
+            }.extract(source, entry)
+        }
+        assertEquals("storage", error.code)
+        assertTrue(error.cause is IOException)
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
+    }
+
+    @Test fun nativeOutputCreationFailureIsStorageAndCleansStaging() = runBlocking<Unit> {
+        val error = failure {
+            DocumentExtractor(context) { input, hint, output, limits ->
+                output.writeText("Do not overwrite")
+                AnyDocNative.convert(input.absolutePath, hint, output.absolutePath, limits)
+            }.extract(source, entry)
+        }
+        assertEquals("storage", error.code)
+        assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
+    }
+
     @Test fun malformedUtf8OutputIsRejectedAndCleaned() = runBlocking<Unit> {
         try {
             DocumentExtractor(context) { _, _, output, _ ->

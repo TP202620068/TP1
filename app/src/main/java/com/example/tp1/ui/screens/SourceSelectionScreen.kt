@@ -39,6 +39,8 @@ import com.example.tp1.sources.SourceKind
 import com.example.tp1.ui.components.FileRow
 import com.example.tp1.ui.components.SectionHeading
 import com.example.tp1.ui.toFileListItem
+import com.example.tp1.ui.components.IndexingStatus
+import com.example.tp1.indexing.IndexingState
 
 @Composable
 internal fun SourceSelectionScreen(
@@ -51,7 +53,9 @@ internal fun SourceSelectionScreen(
     onRemove: (String) -> Unit,
     onClose: () -> Unit,
     onRetry: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    indexing: IndexingState = IndexingState(),
+    onRetryIndexing: (String) -> Unit = {}
 ) {
     Scaffold(
         modifier = modifier.fillMaxSize(),
@@ -136,6 +140,7 @@ internal fun SourceSelectionScreen(
                             )
                         }
                     }
+                    IndexingStatus(indexing, onRetryIndexing, sourceUri = source.record.uri)
                 }
                 item {
                     Text(
