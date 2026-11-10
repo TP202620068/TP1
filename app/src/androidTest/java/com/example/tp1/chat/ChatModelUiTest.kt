@@ -13,6 +13,13 @@ import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.test.performTextReplacement
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.initializer
+import androidx.lifecycle.viewmodel.viewModelFactory
+import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.runner.lifecycle.ActivityLifecycleCallback
+import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
+import androidx.test.runner.lifecycle.Stage
 import com.example.tp1.MainActivity
 import com.example.tp1.OfflineIndexingRule
 import com.example.tp1.PickerRobot
@@ -22,17 +29,45 @@ import com.example.tp1.inference.FinishReason
 import com.example.tp1.inference.ManualInference
 import com.example.tp1.inference.Model
 import com.example.tp1.inference.ModelManager
+import com.example.tp1.inference.InferenceSession
+import com.example.tp1.indexing.RetrievalResult
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.ExternalResource
 
 /** Explicit real-model UI proof. Ordinary instrumentation never downloads or loads weights. */
 @ManualInference
 class ChatModelUiTest {
     @get:Rule(order = 0) val offlineIndexing = OfflineIndexingRule()
-    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
+    // Keep the existing Chat-only lifecycle deadlines; ChatGroundedModelUiTest exercises real retrieval.
+    private val callback = ActivityLifecycleCallback { activity, stage ->
+        if (activity is MainActivity && stage == Stage.CREATED) {
+            ViewModelProvider(activity, viewModelFactory {
+                initializer {
+                    val application = activity.application
+                    val models = ModelManager(application)
+                    ChatViewModel(application, createSavedStateHandle(),
+                        downloadModel = { check(models.isAvailable(Model.Test)) },
+                        openModel = {
+                            val session = InferenceSession.open(models, Model.Test, CHAT_SYSTEM_PROMPT)
+                            ChatConnection(session::prepare, session::stream, session::cancel, session::closeAsync)
+                        }, retrieve = { RetrievalResult.Complete(emptyList()) })
+                }
+            })[ChatViewModel::class.java]
+        }
+    }
+    @get:Rule(order = 1) val chatOnlyOwner = object : ExternalResource() {
+        override fun before() = InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            ActivityLifecycleMonitorRegistry.getInstance().addLifecycleCallback(callback)
+        }
+        override fun after() = InstrumentationRegistry.getInstrumentation().runOnMainSync {
+            ActivityLifecycleMonitorRegistry.getInstance().removeLifecycleCallback(callback)
+        }
+    }
+    @get:Rule(order = 2) val compose = createAndroidComposeRule<MainActivity>()
     private val picker = PickerRobot()
 
     @After fun cleanUp() = picker.cleanUp()

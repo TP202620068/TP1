@@ -49,6 +49,7 @@ class MainActivity : ComponentActivity() {
                     }
                 },
                     onOpen = { entry -> browser.open(entry) { startActivity(it) } },
+                    onOpenChatDocument = { document -> chat.openDocument(document) { startActivity(it) } },
                     onRefresh = { refreshBrowser() }
                 )
             }

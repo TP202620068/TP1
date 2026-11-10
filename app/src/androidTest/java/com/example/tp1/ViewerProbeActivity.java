@@ -26,18 +26,21 @@ public class ViewerProbeActivity extends Activity {
             Uri uri = intent.getData();
             Uri root = DocumentsContract.buildDocumentUriUsingTree(uri, DocumentsContract.getTreeDocumentId(uri));
             Uri sibling = DocumentsContract.buildDocumentUriUsingTree(uri, "sibling");
+            boolean grounded;
             try (InputStream input = getContentResolver().openInputStream(uri)) {
-                verify(new String(input.readAllBytes(), StandardCharsets.UTF_8).equals("TP1 viewer grant proof"));
+                String text = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+                grounded = text.contains("TP1 grounded viewer proof");
+                verify(grounded ? text.contains("Warranty coverage lasts two years") : text.equals("TP1 viewer grant proof"));
             }
             verify(allowed(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION));
             verify(!allowed(uri, Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
             verify(!allowed(root, Intent.FLAG_GRANT_READ_URI_PERMISSION));
             verify(!allowed(sibling, Intent.FLAG_GRANT_READ_URI_PERMISSION));
-            verify("text/plain".equals(intent.getType()));
+            verify(grounded ? ("application/rtf".equals(intent.getType()) || "text/rtf".equals(intent.getType())) : "text/plain".equals(intent.getType()));
             verify(intent.getClipData().getItemCount() == 1 && uri.equals(intent.getClipData().getItemAt(0).getUri()));
             verify((intent.getFlags() & (Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION |
                 Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)) == 0);
-            report = "TP1 viewer proof: read OK; write denied; root denied; sibling denied; MIME OK; ClipData OK; uid=" + Process.myUid();
+            report = (grounded ? "TP1 grounded viewer proof" : "TP1 viewer proof") + ": read OK; write denied; root denied; sibling denied; MIME OK; ClipData OK; uid=" + Process.myUid();
         } catch (Exception error) { report = "TP1 viewer proof FAILED: " + error; }
         TextView text = new TextView(this);
         text.setText(report);

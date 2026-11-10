@@ -232,4 +232,35 @@ class InferenceSessionTest {
         } finally { session.closeAsync().await() }
         assertReleased()
     }
+
+    @Test fun documentBudgetUsesExactChatTokenBoundaryAndExcludesWholeLowerRankedChunks() = runBlocking<Unit> {
+        val engine = LlamaEngine(models)
+        val system = com.example.tp1.chat.CHAT_SYSTEM_PROMPT
+        val session = InferenceSession.open(Model.Test, engine, system)
+        fun match(text: String, ordinal: Int = 0) = com.example.tp1.indexing.RetrievalMatch(
+            text, 1.0, 1, "generation", ordinal, "file", "content://fixture/document/file", "content://fixture/document/file")
+        try {
+            suspend fun candidate(size: Int) = com.example.tp1.chat.prepareChatRequest("question", emptyList(),
+                listOf(match("a" + " a".repeat(size)))) { text, _ -> listOf(ChatMessage(ChatRole.User, text)) }
+            var low = 0
+            var high = 4096
+            while (low < high) {
+                val middle = (low + high + 1) / 2
+                if (engine.tokenCount(system, candidate(middle).messages) <= 3584) low = middle else high = middle - 1
+            }
+            val boundary = candidate(low)
+            assertEquals(3584, engine.tokenCount(system, boundary.messages))
+            val history = listOf(ChatMessage(ChatRole.User, "old"), ChatMessage(ChatRole.Assistant, "answer"))
+            val request = com.example.tp1.chat.prepareChatRequest("question", history,
+                boundary.included + match("lower ranked", 1), session::prepare)
+            assertEquals(boundary.messages, request.messages)
+            assertEquals(boundary.included, request.included)
+            assertEquals(3584, engine.tokenCount(system, request.messages))
+            try {
+                com.example.tp1.chat.prepareChatRequest("a" + " a".repeat(4096), emptyList(), boundary.included, session::prepare)
+                fail("Oversized question accepted")
+            } catch (_: IllegalArgumentException) { }
+        } finally { session.close() }
+        assertReleased()
+    }
 }

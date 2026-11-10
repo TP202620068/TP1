@@ -190,7 +190,8 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
                     arrayOf(winner.documentId.toString(), winner.generation, winner.ordinal.toString())).use { cursor ->
                     if (!cursor.moveToFirst()) throw IOException("Missing winning index chunk")
                     RetrievalMatch(cursor.text("text"), winner.score, winner.documentId, winner.generation, winner.ordinal,
-                        document.active.identity.displayName, document.source.record.uri, document.entry.uri)
+                        document.active.identity.displayName, document.source.record.uri, document.entry.uri,
+                        epochs[document.source.record.uri] ?: 0)
                 }
             }
             val current = SourceStore(context).readForRetrieval().associateBy { it.record.uri }
@@ -212,6 +213,23 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
         return try { authorize(source, entry); true }
         catch (_: SecurityException) { false }
         catch (_: FileNotFoundException) { false }
+    }
+
+    /** Read-only submission check. Creating an indexing ticket would supersede unrelated queued work. */
+    fun checkContext(matches: List<RetrievalMatch>, coroutine: CoroutineContext) = synchronized(ExtractionWork.sourceLock) {
+        val sources = SourceStore(context).readForRetrieval().associateBy { it.record.uri }
+        for (match in matches.distinctBy { it.documentId to it.generation }) {
+            coroutine.ensureActive()
+            val source = sources[match.sourceUri] ?: throw SecurityException("Context source removed")
+            if ((epochs[match.sourceUri] ?: 0) != match.sourceEpoch) throw SecurityException("Context source changed")
+            val entry = BrowserEntry(match.sourceUri, match.documentUri,
+                SourceMetadata(match.displayName, null, null, null), false)
+            val current = active(source, entry)
+            if (current?.documentId != match.documentId || current.generation != match.generation) {
+                throw SecurityException("Context snapshot changed")
+            }
+        }
+        coroutine.ensureActive()
     }
 
     private fun forEachChunk(active: Active, consume: (IndexedChunk) -> Unit) {

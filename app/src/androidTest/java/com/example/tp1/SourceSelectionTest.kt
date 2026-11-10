@@ -88,7 +88,7 @@ class SourceSelectionTest {
         compose.onNodeWithText("Pulsa Añadir para elegir archivos o carpetas.").assertIsDisplayed()
         compose.onNodeWithText("Fuentes").assertDoesNotExist()
         compose.onNode(hasText("Chat") and hasClickAction()).performClick().assertIsSelected()
-        compose.onNodeWithText("Chat local. La consulta de archivos todavía no está disponible.").assertIsDisplayed()
+        compose.onNodeWithText("Chat local con documentos indexados. El modelo puede equivocarse.").assertIsDisplayed()
         compose.onNode(hasText("Explorador") and hasClickAction()).performClick()
         openSelection()
         compose.onNodeWithText("Listo").assertIsEnabled()

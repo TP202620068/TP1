@@ -186,6 +186,80 @@ class DocumentRetrievalTest {
         assertTrue(matches().isEmpty())
     }
 
+    @Test fun contextRecheckRejectsRevocationReplacementAndSameUriRemovalReaddWithoutSupersedingRequests() = runBlocking<Unit> {
+        val source = select()
+        seed(source, listOf("included" to vector()))
+        val found = matches()
+        val retrieval = retriever()
+        retrieval.checkContext(found)
+        IndexStore(context).use { store ->
+            val pending = store.request(source, DocumentBrowser(resolver).root(source))
+            retrieval.checkContext(found)
+            store.checkCurrent(pending)
+        }
+        control(source, "missing")
+        failure<SecurityException> { retrieval.checkContext(found) }
+        control(source)
+        seed(source, listOf("replacement" to vector()))
+        failure<SecurityException> { retrieval.checkContext(found) }
+        val replaced = matches()
+        sources.remove(sources.restore().sources, source.record.uri)
+        // Fixture reissues the provider grant, just as a new picker selection does.
+        select(id(source))
+        seed(source, listOf("readded" to vector()))
+        failure<SecurityException> { retrieval.checkContext(replaced) }
+    }
+
+    @Test fun footerOpeningUsesCurrentMembershipAndFallsBackToAnAuthorizedOverlappingSelection() = runBlocking<Unit> {
+        val document = select()
+        val treeUri = fixture("fixture-authorize").getString("uri")!!
+        selected += treeUri
+        val tree = sources.add(sources.restore().sources, listOf(treeUri), SourceKind.Tree, flags).sources.single { it.record.uri == treeUri }
+        val child = DocumentBrowser(resolver).root(document).copy(sourceUri = treeUri,
+            uri = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(treeUri), id(document)).toString())
+        seed(document, listOf("first" to vector(), "second" to vector()))
+        seed(tree, listOf("third" to vector()), entry = child)
+        val prepared = com.example.tp1.chat.PreparedChatRequest(emptyList(), matches())
+        assertEquals(1, prepared.documents.size)
+        val footer = prepared.documents.single()
+        assertEquals(2, footer.alternatives.size)
+        sources.remove(sources.restore().sources, document.record.uri)
+        val intent = com.example.tp1.chat.chatDocumentIntent(context, footer)
+        assertEquals(Intent.ACTION_VIEW, intent.action)
+        assertEquals(child.uri, intent.data.toString())
+        assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION, intent.flags)
+        assertEquals(intent.data, intent.clipData!!.getItemAt(0).uri)
+        sources.remove(sources.restore().sources, treeUri)
+        failure<SecurityException> { com.example.tp1.chat.chatDocumentIntent(context, footer) }
+    }
+
+    @Test fun chatOpeningReportsMissingViewerAndRevokedFooterWithoutLaunching() = runBlocking<Unit> {
+        val source = select()
+        seed(source, listOf("included" to vector()))
+        val found = matches()
+        val chat = withContext(Dispatchers.Main) {
+            ChatViewModel(application, SavedStateHandle(), {}, {
+                ChatConnection({ text, history -> com.example.tp1.inference.budgetChatMessages(
+                    com.example.tp1.chat.CHAT_SYSTEM_PROMPT, history, text) { 100 } }, { flow {
+                    emit(GenerationEvent.Text("answer")); emit(GenerationEvent.Finished(FinishReason.EOG, 1))
+                } }, {}, { CompletableDeferred(Unit) })
+            }, retrieve = { RetrievalResult.Complete(found) }, checkContext = { retriever().checkContext(it) }).also {
+                owners.put("chat", it); it.setForeground(true); it.setSelected(true)
+            }
+        }
+        withTimeout(5_000) { while (chat.state.value.preparation != ChatPreparation.Ready) delay(5) }
+        withContext(Dispatchers.Main) { chat.editDraft("question"); chat.send() }
+        withTimeout(5_000) { while (chat.state.value.turns.singleOrNull()?.answer != "answer") delay(5) }
+        val footer = chat.state.value.turns.single().documents.single()
+        withContext(Dispatchers.Main) { chat.openDocument(footer) { throw android.content.ActivityNotFoundException() } }
+        withTimeout(5_000) { while (chat.state.value.openingDocument) delay(5) }
+        assertEquals(com.example.tp1.chat.ChatOpenProblem.NoViewer, chat.state.value.openProblem)
+        resolver.releasePersistableUriPermission(Uri.parse(source.record.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        withContext(Dispatchers.Main) { chat.openDocument(footer) { fail("Revoked document launched") } }
+        withTimeout(5_000) { while (chat.state.value.openingDocument) delay(5) }
+        assertEquals(com.example.tp1.chat.ChatOpenProblem.Unavailable, chat.state.value.openProblem)
+    }
+
     @Test fun zeroChunkWrongModelInvalidatedAndStagedRowsAreNotCandidates() = runBlocking<Unit> {
         val empty = select()
         val wrong = select()
@@ -443,7 +517,9 @@ class DocumentRetrievalTest {
             ChatConnection({ text, _ -> listOf(ChatMessage(ChatRole.User, text)) }, { flow {
                 emit(GenerationEvent.Text("Partial answer")); awaitCancellation()
             } }, {}, { CompletableDeferred(Unit) })
-        }).also { owners.put("chat", it); it.setForeground(true); it.setSelected(true) }
+        }, retrieve = { RetrievalResult.Complete(emptyList()) }).also {
+            owners.put("chat", it); it.setForeground(true); it.setSelected(true)
+        }
     }
 
     @Test fun activeChatIsNotInterruptedAndStoppedTranscriptAndDraftSurviveRetrieval() = runBlocking<Unit> {

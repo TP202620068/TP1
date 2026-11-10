@@ -11,13 +11,15 @@ import org.junit.Test
 class ChatStateTest {
     private fun pair(text: String) = listOf(ChatMessage(ChatRole.User, text), ChatMessage(ChatRole.Assistant, "answer"))
 
-    @Test fun sendRequiresReadyIdleAndValidUtf8WithinSystemByteBudget() {
+    @Test fun sendRequiresIdleAndValidUtf8ButCanReacquireAYieldedConnection() {
         val ready = ChatState(draft = "Hola 😀", preparation = ChatPreparation.Ready)
         assertTrue(ready.canSend)
         assertFalse(ready.copy(problem = ChatProblem.InvalidInput).canSend)
-        for (preparation in ChatPreparation.entries.filter { it != ChatPreparation.Ready }) {
+        for (preparation in listOf(ChatPreparation.Acquiring, ChatPreparation.Loading, ChatPreparation.Closing)) {
             assertFalse(ready.copy(preparation = preparation).canSend)
         }
+        assertTrue(ready.copy(preparation = ChatPreparation.Unprepared).canSend)
+        assertTrue(ready.copy(preparation = ChatPreparation.Error).canSend)
         for (phase in ChatPhase.entries.filter { it != ChatPhase.Idle }) assertFalse(ready.copy(phase = phase).canSend)
         for (draft in listOf("", " \n", "bad\u0000input", "\uD800", "é".repeat(32768), " \uD800 ", " bad\u0000input ")) {
             assertFalse(ready.copy(draft = draft).canSend)

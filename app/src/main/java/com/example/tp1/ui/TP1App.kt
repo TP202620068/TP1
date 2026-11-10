@@ -35,6 +35,8 @@ import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.browser.BrowserState
 import com.example.tp1.browser.BrowserProblem
 import com.example.tp1.chat.ChatState
+import com.example.tp1.chat.ChatDocument
+import com.example.tp1.chat.ChatOpenProblem
 import com.example.tp1.indexing.IndexingState
 import com.example.tp1.ui.screens.ChatComposer
 import com.example.tp1.ui.screens.ChatScreen
@@ -61,6 +63,8 @@ internal fun TP1App(
     onChatSend: () -> Unit = {},
     onChatStop: () -> Unit = {},
     onChatRetry: () -> Unit = {},
+    onChatOpenDocument: (ChatDocument) -> Unit = {},
+    onChatOpenProblemDismissed: (ChatOpenProblem) -> Unit = {},
     indexing: IndexingState = IndexingState(),
     onRetryIndexing: (String) -> Unit = {}
 ) {
@@ -72,6 +76,17 @@ internal fun TP1App(
     val problem = browser.message
     val problemText = problem?.let { stringResource(it.messageResource()) }
     val retry = stringResource(R.string.retry)
+    val chatOpenText = chat.openProblem?.let { stringResource(when (it) {
+        ChatOpenProblem.NoViewer -> R.string.browser_no_viewer
+        ChatOpenProblem.Unavailable -> R.string.chat_document_unavailable
+        ChatOpenProblem.Provider -> R.string.browser_provider_error
+    }) }
+    LaunchedEffect(chat.openProblem, selectedTab) {
+        val problem = chat.openProblem ?: return@LaunchedEffect
+        if (selectedTab != AppTab.Chat) return@LaunchedEffect
+        try { snackbar.showSnackbar(requireNotNull(chatOpenText), duration = SnackbarDuration.Short) }
+        finally { onChatOpenProblemDismissed(problem) }
+    }
     LaunchedEffect(selectedTab) { onChatSelected(selectedTab == AppTab.Chat) }
     LaunchedEffect(problem, selectedTab) {
         if (problem == null || selectedTab != AppTab.Explorer) return@LaunchedEffect
@@ -138,7 +153,8 @@ internal fun TP1App(
                     indexing = indexing,
                     onRetryIndexing = onRetryIndexing
                 )
-                AppTab.Chat -> ChatScreen(state = chat, contentPadding = padding, onRetry = onChatRetry)
+                AppTab.Chat -> ChatScreen(state = chat, contentPadding = padding, onRetry = onChatRetry,
+                    onOpenDocument = onChatOpenDocument)
             }
         }
     }

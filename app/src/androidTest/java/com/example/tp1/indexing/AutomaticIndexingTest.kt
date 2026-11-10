@@ -354,7 +354,9 @@ class AutomaticIndexingTest {
                     emit(GenerationEvent.Text("Kept answer"))
                     emit(GenerationEvent.Finished(FinishReason.EOG, 2, 0, null))
                 } }, { cancelled = true }, { CompletableDeferred(Unit) })
-            }).also { owners.put("chat", it); it.setForeground(true); it.setSelected(true) }
+            }, retrieve = { RetrievalResult.Complete(emptyList()) }).also {
+                owners.put("chat", it); it.setForeground(true); it.setSelected(true)
+            }
         }
         withTimeout(5_000) { chat.state.first { it.preparation == com.example.tp1.chat.ChatPreparation.Ready } }
         withContext(Dispatchers.Main) { chat.editDraft("Question"); chat.send() }

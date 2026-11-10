@@ -17,6 +17,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="application/x-tp1-probe" />
                 <data android:mimeType="text/plain" />
+                <data android:mimeType="application/rtf" />
+                <data android:mimeType="text/rtf" />
             </intent-filter>
         </activity>
     </application>

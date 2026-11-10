@@ -189,8 +189,8 @@
     public static java.lang.Object budgetChatMessages(java.lang.String, java.util.List, java.lang.String, kotlin.jvm.functions.Function2, kotlin.coroutines.Continuation);
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatViewModel {
-    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0);
-    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2);
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2, int, kotlin.jvm.internal.DefaultConstructorMarker);
     public kotlinx.coroutines.flow.StateFlow getState();
     public void editDraft(java.lang.String);
     public void setSelected(boolean);
@@ -199,11 +199,14 @@
     public void send();
     public void stop();
     public void retry();
+    public void openDocument(com.example.tp1.chat.ChatDocument, kotlin.jvm.functions.Function1);
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatConnection {
     public <init>(kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0);
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatState {
+    public <init>(java.lang.String, java.util.List, com.example.tp1.chat.ChatPreparation, com.example.tp1.chat.ChatPhase, com.example.tp1.chat.ChatProblem, boolean, com.example.tp1.chat.ChatOpenProblem, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public static com.example.tp1.chat.ChatState copy$default(com.example.tp1.chat.ChatState, java.lang.String, java.util.List, com.example.tp1.chat.ChatPreparation, com.example.tp1.chat.ChatPhase, com.example.tp1.chat.ChatProblem, boolean, com.example.tp1.chat.ChatOpenProblem, int, java.lang.Object);
     # The separately compiled Compose test reads the compiler-generated stability field.
     public static final int $stable;
     public java.lang.String getDraft();
@@ -211,8 +214,17 @@
     public com.example.tp1.chat.ChatPreparation getPreparation();
     public com.example.tp1.chat.ChatPhase getPhase();
     public com.example.tp1.chat.ChatProblem getProblem();
+    public boolean getCanSend();
+    public boolean getOpeningDocument();
+    public com.example.tp1.chat.ChatOpenProblem getOpenProblem();
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatTurn {
+    public <init>(long, java.lang.String, java.lang.String, boolean, com.example.tp1.inference.FinishReason, boolean, java.util.List, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public static com.example.tp1.chat.ChatTurn copy$default(com.example.tp1.chat.ChatTurn, long, java.lang.String, java.lang.String, boolean, com.example.tp1.inference.FinishReason, boolean, java.util.List, int, java.lang.Object);
+    public long getId();
+    public java.lang.String getInput();
+    public java.util.List getDocuments();
+    public boolean getCanRetry();
     public java.lang.String getAnswer();
     public boolean getRunning();
     public boolean getFailed();
@@ -245,6 +257,7 @@
     public <init>(...);
     public static com.example.tp1.indexing.IndexStore$Companion Companion;
     public com.example.tp1.indexing.IndexStore$Ticket request(com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry);
+    public void checkCurrent(com.example.tp1.indexing.IndexStore$Ticket);
     public com.example.tp1.indexing.IndexStore$Candidate stage(com.example.tp1.indexing.IndexStore$Ticket);
     public long append(com.example.tp1.indexing.IndexStore$Candidate, int, com.example.tp1.extraction.MarkdownChunk, float[], int);
     public void publish(com.example.tp1.indexing.IndexStore$Candidate, com.example.tp1.indexing.IndexIdentity, int, kotlin.coroutines.CoroutineContext);
@@ -283,7 +296,8 @@
     public static com.example.tp1.inference.NativeWorkHandoff INSTANCE;
     public boolean getBlocked();
     public kotlinx.coroutines.sync.Mutex getDocuments();
-    public java.lang.Object acquire(java.lang.Object, kotlin.coroutines.Continuation);
+    public java.lang.Object acquire(java.lang.Object, boolean, kotlin.coroutines.Continuation);
+    public static java.lang.Object acquire$default(com.example.tp1.inference.NativeWorkHandoff, java.lang.Object, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
     public java.lang.Object release(java.lang.Object, kotlin.coroutines.Continuation);
 }
 -keep,allowoptimization class com.example.tp1.extraction.MarkdownChunk {
@@ -295,13 +309,20 @@
 -keep,allowoptimization class com.example.tp1.indexing.DocumentRetriever {
     public <init>(...);
     public java.lang.Object retrieve(java.lang.String, int, kotlin.coroutines.Continuation);
+    public java.lang.Object checkContext(java.util.List, kotlin.coroutines.Continuation);
     public static java.lang.Object retrieve$default(com.example.tp1.indexing.DocumentRetriever, java.lang.String, int, kotlin.coroutines.Continuation, int, java.lang.Object);
 }
 -keep,allowoptimization class com.example.tp1.indexing.RetrievalEmbeddings { public <init>(...); }
 -keep,allowoptimization interface com.example.tp1.indexing.RetrievalResult
--keep,allowoptimization class com.example.tp1.indexing.RetrievalResult$Complete { public java.util.List getMatches(); }
+-keep,allowoptimization class com.example.tp1.indexing.RetrievalResult$Complete {
+    public <init>(java.util.List);
+    public java.util.List getMatches();
+}
 -keep,allowoptimization class com.example.tp1.indexing.RetrievalResult$Busy { public static com.example.tp1.indexing.RetrievalResult$Busy INSTANCE; }
 -keep,allowoptimization class com.example.tp1.indexing.RetrievalMatch {
+    public <init>(java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long);
+    public <init>(java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public static com.example.tp1.indexing.RetrievalMatch copy$default(com.example.tp1.indexing.RetrievalMatch, java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long, int, java.lang.Object);
     public java.lang.String getText();
     public double getScore();
     public long getDocumentId();
@@ -312,6 +333,21 @@
     public java.lang.String getDocumentUri();
     public boolean equals(java.lang.Object);
 }
+-keep,allowoptimization class com.example.tp1.chat.ChatDocument {
+    public java.lang.String getName();
+    public java.util.List getAlternatives();
+}
+-keep,allowoptimization class com.example.tp1.chat.PreparedChatRequest {
+    public <init>(java.util.List, java.util.List);
+    public java.util.List getDocuments();
+    public java.util.List getMessages();
+    public java.util.List getIncluded();
+}
+-keep,allowoptimization class com.example.tp1.chat.ChatContextKt {
+    public static java.lang.Object prepareChatRequest(java.lang.String, java.util.List, java.util.List, kotlin.jvm.functions.Function3, kotlin.coroutines.Continuation);
+    public static java.lang.Object chatDocumentIntent(android.content.Context, com.example.tp1.chat.ChatDocument, kotlin.coroutines.Continuation);
+}
+-keep,allowoptimization enum com.example.tp1.chat.ChatOpenProblem { public static com.example.tp1.chat.ChatOpenProblem *; }
 -keep,allowoptimization class com.example.tp1.inference.ModelArtifact { public java.lang.String getSha256(); }
 
 # Automatic indexing uses concrete seams; keep only members called by the separate APK.

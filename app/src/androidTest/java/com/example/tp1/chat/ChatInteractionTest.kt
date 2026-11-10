@@ -64,7 +64,7 @@ class ChatInteractionTest {
                      savedState: SavedStateHandle = SavedStateHandle(), initialTab: AppTab = AppTab.Chat) {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             chat = ChatViewModel(InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application,
-                savedState, download, open)
+                savedState, download, open, retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
             store.put("chat", chat)
             chat.setForeground(true)
         }
@@ -124,7 +124,8 @@ class ChatInteractionTest {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
             val savedState = SavedStateHandle()
-            chat = ChatViewModel(application, savedState, {}, { connection() })
+            chat = ChatViewModel(application, savedState, {}, { connection() },
+                retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
             store.put("chat", chat)
             chat.editDraft(boundary)
             assertEquals(boundary, chat.state.value.draft)
@@ -136,7 +137,8 @@ class ChatInteractionTest {
             assertEquals(ChatProblem.InvalidInput, chat.state.value.problem)
             chat.editDraft(boundary)
             assertEquals(ChatProblem.InvalidInput, chat.state.value.problem)
-            val restored = ChatViewModel(application, savedState, {}, { connection() })
+            val restored = ChatViewModel(application, savedState, {}, { connection() },
+                retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
             store.put("restored", restored)
             assertEquals(boundary, restored.state.value.draft)
             assertNull(restored.state.value.problem)
@@ -466,7 +468,7 @@ class ChatInteractionTest {
         awaitReady()
         send("Respuesta larga")
         compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.answer?.isNotEmpty() == true }
-        val notice = compose.onNodeWithText("Chat local. La consulta de archivos todavía no está disponible.")
+        val notice = compose.onNodeWithText("Chat local con documentos indexados. El modelo puede equivocarse.")
         compose.onNode(hasScrollToIndexAction()).performScrollToIndex(0)
         notice.assertIsDisplayed()
         compose.runOnIdle { finish.complete(Unit) }

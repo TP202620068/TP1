@@ -19,6 +19,7 @@ import com.example.tp1.R
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.chat.ChatViewModel
+import com.example.tp1.chat.ChatDocument
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
 import com.example.tp1.ui.screens.SourceSelectionScreen
@@ -30,6 +31,7 @@ internal fun SourceFlow(
     chat: ChatViewModel,
     onPick: (SourceKind) -> Unit,
     onOpen: (BrowserEntry) -> Unit,
+    onOpenChatDocument: (ChatDocument) -> Unit,
     onRefresh: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
@@ -70,6 +72,8 @@ internal fun SourceFlow(
                     onChatSend = chat::send,
                     onChatStop = chat::stop,
                     onChatRetry = chat::retry,
+                    onChatOpenDocument = onOpenChatDocument,
+                    onChatOpenProblemDismissed = chat::dismissOpenProblem,
                     files = browsing.entries.map { it.toFileListItem() },
                     browser = browsing,
                     onEntryClick = { id ->

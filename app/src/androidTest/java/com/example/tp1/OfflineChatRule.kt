@@ -21,7 +21,8 @@ class OfflineChatRule : ExternalResource() {
                 initializer {
                     ChatViewModel(activity.application, createSavedStateHandle(),
                         downloadModel = { awaitCancellation() },
-                        openModel = { error("Navigation test must not load a real model") })
+                        openModel = { error("Navigation test must not load a real model") },
+                        retrieve = { error("Navigation test must not load retrieval weights") })
                 }
             })[ChatViewModel::class.java]
         }

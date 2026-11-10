@@ -28,6 +28,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Stop
+import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -53,6 +54,7 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.tooling.preview.Devices
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -62,6 +64,7 @@ import com.example.tp1.chat.ChatPreparation
 import com.example.tp1.chat.ChatProblem
 import com.example.tp1.chat.ChatState
 import com.example.tp1.chat.ChatTurn
+import com.example.tp1.chat.ChatDocument
 import com.example.tp1.inference.FinishReason
 import com.example.tp1.ui.theme.TP1Theme
 import com.example.tp1.ui.theme.shellTextFieldColors
@@ -72,7 +75,8 @@ internal fun ChatScreen(
     state: ChatState,
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
-    onRetry: () -> Unit = {}
+    onRetry: () -> Unit = {},
+    onOpenDocument: (ChatDocument) -> Unit = {}
 ) {
     val list = rememberLazyListState()
     var followOutput by rememberSaveable { mutableStateOf(true) }
@@ -101,8 +105,10 @@ internal fun ChatScreen(
         items(state.turns, key = { it.id }) { turn ->
             ChatTurnContent(
                 turn,
-                retryEnabled = !state.busy && state.preparation == ChatPreparation.Ready && turn.id == state.turns.last().id,
-                onRetry = onRetry
+                retryEnabled = !state.busy && turn.id == state.turns.last().id,
+                onRetry = onRetry,
+                onOpenDocument = onOpenDocument,
+                openingDocument = state.openingDocument
             )
         }
         item(key = "tail") { Spacer(Modifier.height(1.dp)) }
@@ -110,8 +116,11 @@ internal fun ChatScreen(
 }
 
 @Composable
-private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Modifier = Modifier, onRetry: () -> Unit = {}) {
+private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Modifier = Modifier,
+                            onRetry: () -> Unit = {}, onOpenDocument: (ChatDocument) -> Unit = {},
+                            openingDocument: Boolean = false) {
     val assistantLabel = stringResource(R.string.chat_assistant)
+    var documentsExpanded by rememberSaveable(turn.id) { mutableStateOf(false) }
     Column(modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = MaterialTheme.shapes.large,
             modifier = Modifier.align(Alignment.End).fillMaxWidth(0.9f)) {
@@ -141,6 +150,25 @@ private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Mod
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     if (turn.canRetry && retryEnabled) TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
+                    if (!turn.running && turn.answer.isNotBlank() && turn.documents.isNotEmpty()) {
+                        val label = stringResource(R.string.chat_documents, turn.documents.size)
+                        val expanded = stringResource(if (documentsExpanded) R.string.chat_documents_expanded else R.string.chat_documents_collapsed)
+                        TextButton(onClick = { documentsExpanded = !documentsExpanded }, modifier = Modifier.semantics {
+                            contentDescription = label
+                            stateDescription = expanded
+                        }) {
+                            Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Text(label, style = MaterialTheme.typography.labelSmall)
+                        }
+                        if (documentsExpanded) {
+                            Text(stringResource(R.string.chat_documents_description), style = MaterialTheme.typography.bodySmall)
+                            turn.documents.forEach { document ->
+                                TextButton(onClick = { onOpenDocument(document) }, enabled = !openingDocument) {
+                                    Text(document.name, style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -186,7 +214,10 @@ internal fun ChatComposer(
     val inputLabel = stringResource(R.string.chat_input_label)
     Column(modifier.fillMaxWidth()
         .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal))) {
-        if (state.preparation != ChatPreparation.Ready) {
+        if (state.phase == ChatPhase.Retrieving) {
+            Text(stringResource(R.string.chat_retrieving), style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(horizontal = 16.dp).semantics { liveRegion = LiveRegionMode.Polite })
+        } else if (state.preparation != ChatPreparation.Ready) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 val preparing = state.preparation in setOf(ChatPreparation.Acquiring, ChatPreparation.Loading, ChatPreparation.Closing)
@@ -209,6 +240,10 @@ internal fun ChatComposer(
             state.draft.isNotBlank() && !state.validDraft -> R.string.chat_invalid_input
             state.problem == ChatProblem.ContextLimit -> R.string.chat_context_limit
             state.problem == ChatProblem.Generation -> R.string.chat_response_error
+            state.problem == ChatProblem.Retrieval -> R.string.chat_retrieval_error
+            state.problem == ChatProblem.RetrievalBusy -> R.string.chat_retrieval_busy
+            state.problem == ChatProblem.QueryLimit -> R.string.chat_query_limit
+            state.problem == ChatProblem.Access -> R.string.chat_context_access
             else -> null
         }
         TextField(

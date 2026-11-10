@@ -22,7 +22,8 @@ internal data class RetrievalMatch(
     val ordinal: Int,
     val displayName: String,
     val sourceUri: String,
-    val documentUri: String
+    val documentUri: String,
+    val sourceEpoch: Long = 0
 )
 
 internal sealed interface RetrievalResult {
@@ -53,7 +54,7 @@ internal class DocumentRetriever(
             var embeddings: RetrievalEmbeddings? = null
             var failure: Throwable? = null
             val vector = try {
-                if (!NativeWorkHandoff.acquire(handoff)) return@withLock RetrievalResult.Busy
+                if (!NativeWorkHandoff.acquire(handoff, query = true)) return@withLock RetrievalResult.Busy
                 currentCoroutineContext().ensureActive()
                 embeddings = openEmbeddings()
                 currentCoroutineContext().ensureActive()
@@ -80,6 +81,15 @@ internal class DocumentRetriever(
                     RetrievalResult.Complete(store.search(vector, k, models.profile(Model.JinaV5NanoRetrieval).artifact.sha256, coroutine))
                 }
             }
+        }
+    }
+
+    suspend fun checkContext(matches: List<RetrievalMatch>) = withContext(Dispatchers.IO) {
+        if (matches.isEmpty()) return@withContext
+        val coroutine = currentCoroutineContext()
+        synchronized(ExtractionWork.sourceLock) {
+            coroutine.ensureActive()
+            IndexStore(context).use { it.checkContext(matches, coroutine) }
         }
     }
 }

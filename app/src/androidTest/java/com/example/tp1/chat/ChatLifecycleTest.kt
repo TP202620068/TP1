@@ -61,7 +61,8 @@ class ChatLifecycleTest {
     private fun start(open: suspend () -> ChatConnection = { connection() }) {
         val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
         chat = ChatViewModel(application, SavedStateHandle(), {}, { opened++; open() },
-            elapsedRealtime = { scheduler.currentTime + sleptMillis })
+            elapsedRealtime = { scheduler.currentTime + sleptMillis },
+            retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
         store.put("chat", chat)
         chat.setForeground(true)
         chat.setSelected(true)
