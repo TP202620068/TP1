@@ -72,6 +72,7 @@ abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations
 
 val nativeAbis = listOf("arm64-v8a")
 val releaseInstrumentation = providers.gradleProperty("tp1.releaseInstrumentation").map(String::toBoolean).getOrElse(false)
+val nativeDependenciesOffline = if (gradle.startParameter.isOffline) "ON" else "OFF"
 
 android {
     namespace = "com.example.tp1"
@@ -87,6 +88,7 @@ android {
         externalNativeBuild {
             cmake {
                 arguments += "-DANDROID_STL=c++_shared"
+                arguments += "-DTP1_NATIVE_OFFLINE=$nativeDependenciesOffline"
                 targets += "tp1_llama"
             }
         }
@@ -138,6 +140,16 @@ android {
     }
 }
 
+val prepareNativeDependencies = tasks.register<Exec>("prepareNativeDependencies") {
+    group = "build setup"
+    description = "Downloads missing native sources at the pinned commits."
+    val executable = if (System.getProperty("os.name").startsWith("Windows")) "cmake.exe" else "cmake"
+    val cmake = androidComponents.sdkComponents.sdkDirectory.get().asFile
+        .resolve("cmake/${android.externalNativeBuild.cmake.version}/bin/$executable")
+    commandLine(cmake.absolutePath, "-DTP1_NATIVE_OFFLINE=$nativeDependenciesOffline", "-P",
+        layout.projectDirectory.file("src/main/cpp/NativeDependencies.cmake").asFile.absolutePath)
+}
+
 /** Ship source/runtime notices without copying or modifying dependency sources. */
 abstract class LlamaNoticesTask @Inject constructor(private val files: FileSystemOperations) : DefaultTask() {
     @get:InputDirectory abstract val llamaDirectory: DirectoryProperty
@@ -168,6 +180,7 @@ val nativeApi = requireNotNull(android.defaultConfig.minSdk)
 val selectedNdk = androidComponents.sdkComponents.ndkDirectory
 androidComponents.onVariants { variant ->
     val notices = tasks.register<LlamaNoticesTask>("stageLlamaNotices${variant.name.replaceFirstChar { it.uppercaseChar() }}") {
+        dependsOn(prepareNativeDependencies)
         llamaDirectory.set(rootProject.layout.projectDirectory.dir("third_party/llama.cpp"))
         kleidiaiDirectory.set(rootProject.layout.projectDirectory.dir("third_party/kleidiai"))
         ndkDirectory.set(selectedNdk)
