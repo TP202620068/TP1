@@ -15,3 +15,6 @@
 -keepclassmembers,allowoptimization class com.example.tp1.chat.ChatViewModel {
     public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle);
 }
+-keepclassmembers,allowoptimization class com.example.tp1.search.SearchViewModel {
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle);
+}

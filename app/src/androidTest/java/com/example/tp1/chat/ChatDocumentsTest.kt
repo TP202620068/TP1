@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.example.tp1.inference.FinishReason
+import com.example.tp1.browser.DocumentReference
 import com.example.tp1.ui.AppTab
 import com.example.tp1.ui.TP1App
 import com.example.tp1.ui.theme.TP1Theme
@@ -34,7 +35,7 @@ class ChatDocumentsTest {
     @Test fun deduplicatesFilesNotNamesAndExpansionSurvivesTabsAndStateRestoration() {
         val docs = documents()
         assertEquals(2, docs.size)
-        var opened: ChatDocument? = null
+        var opened: DocumentReference? = null
         val restore = StateRestorationTester(compose)
         restore.setContent {
             TP1Theme { TP1App(initialTab = AppTab.Chat, chat = ChatState(turns = listOf(

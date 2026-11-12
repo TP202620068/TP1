@@ -11,6 +11,9 @@ import com.example.tp1.sources.SelectedSource
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourceMetadata
 import com.example.tp1.sources.SourceRecord
+import com.example.tp1.browser.DocumentReference
+import com.example.tp1.search.SearchRow
+import com.example.tp1.search.SearchState
 import com.example.tp1.ui.screens.SourceSelectionScreen
 
 private object ShellFixtures {
@@ -42,6 +45,17 @@ private fun ChatPreview() {
 @Composable
 private fun EmptyExplorerPreview() {
     TP1Theme { TP1App() }
+}
+
+@Preview(name = "Resultados con texto grande", widthDp = 320, heightDp = 740, fontScale = 2f)
+@Composable
+private fun SearchResultsPreview() {
+    TP1Theme {
+        TP1App(search = SearchState(draft = "garantía", submitted = "garantía", rows = listOf(
+            SearchRow(DocumentReference("preview", "warranty", "Garantía electrodomésticos.pdf", emptyList()),
+                "La garantía tiene una duración de dos años. Conserva el recibo para solicitar una reparación.")
+        )))
+    }
 }
 
 @Preview(name = "Nombre largo y texto grande", widthDp = 390, heightDp = 300, fontScale = 2f)

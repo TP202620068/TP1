@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.LinearProgressIndicator
@@ -27,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -35,9 +37,10 @@ import com.example.tp1.ui.components.FileListItem
 import com.example.tp1.browser.BrowserState
 import com.example.tp1.browser.BrowserProblem
 import com.example.tp1.chat.ChatState
-import com.example.tp1.chat.ChatDocument
+import com.example.tp1.browser.DocumentReference
 import com.example.tp1.chat.ChatOpenProblem
 import com.example.tp1.indexing.IndexingState
+import com.example.tp1.search.SearchState
 import com.example.tp1.ui.screens.ChatComposer
 import com.example.tp1.ui.screens.ChatScreen
 import com.example.tp1.ui.screens.ExplorerScreen
@@ -63,17 +66,25 @@ internal fun TP1App(
     onChatSend: () -> Unit = {},
     onChatStop: () -> Unit = {},
     onChatRetry: () -> Unit = {},
-    onChatOpenDocument: (ChatDocument) -> Unit = {},
+    onChatOpenDocument: (DocumentReference) -> Unit = {},
     onChatOpenProblemDismissed: (ChatOpenProblem) -> Unit = {},
     indexing: IndexingState = IndexingState(),
-    onRetryIndexing: (String) -> Unit = {}
+    onRetryIndexing: (String) -> Unit = {},
+    search: SearchState = SearchState(),
+    onExplorerSelected: (Boolean) -> Unit = {},
+    onSearchDraftChange: (String) -> Unit = {},
+    onSearchSubmit: () -> Unit = {},
+    onSearchClear: () -> Unit = {},
+    onSearchBack: () -> Unit = {},
+    onSearchRetry: () -> Unit = {},
+    onSearchOpenDocument: (DocumentReference) -> Unit = {},
+    onSearchOpenProblemDismissed: (BrowserProblem) -> Unit = {}
 ) {
     var selectedTab by rememberSaveable { mutableStateOf(initialTab) }
-    var query by rememberSaveable { mutableStateOf("") }
     val screenState = rememberSaveableStateHolder()
     val focusManager = LocalFocusManager.current
     val snackbar = remember { SnackbarHostState() }
-    val problem = browser.message
+    val problem = if (search.showingResults) search.openProblem else browser.message
     val problemText = problem?.let { stringResource(it.messageResource()) }
     val retry = stringResource(R.string.retry)
     val chatOpenText = chat.openProblem?.let { stringResource(when (it) {
@@ -87,28 +98,36 @@ internal fun TP1App(
         try { snackbar.showSnackbar(requireNotNull(chatOpenText), duration = SnackbarDuration.Short) }
         finally { onChatOpenProblemDismissed(problem) }
     }
-    LaunchedEffect(selectedTab) { onChatSelected(selectedTab == AppTab.Chat) }
+    LaunchedEffect(selectedTab) {
+        onExplorerSelected(selectedTab == AppTab.Explorer)
+        onChatSelected(selectedTab == AppTab.Chat)
+    }
     LaunchedEffect(problem, selectedTab) {
         if (problem == null || selectedTab != AppTab.Explorer) return@LaunchedEffect
         try {
             if (problem != BrowserProblem.Access || sourceMessage == null) {
                 val result = snackbar.showSnackbar(
                     message = requireNotNull(problemText),
-                    actionLabel = retry.takeUnless { problem == BrowserProblem.NoViewer },
+                    actionLabel = retry.takeUnless { search.showingResults || problem == BrowserProblem.NoViewer },
                     duration = SnackbarDuration.Short
                 )
                 if (result == SnackbarResult.ActionPerformed) onRetry()
             }
         } finally {
-            onMessageDismissed(problem)
+            if (search.showingResults) onSearchOpenProblemDismissed(problem) else onMessageDismissed(problem)
         }
     }
     val selectTab: (AppTab) -> Unit = { tab ->
         focusManager.clearFocus()
         selectedTab = tab
+        onExplorerSelected(tab == AppTab.Explorer)
         onChatSelected(tab == AppTab.Chat)
     }
-    BackHandler(enabled = selectedTab == AppTab.Explorer && !browser.atRoots, onBack = onBrowserBack)
+    val keyboardVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    BackHandler(enabled = selectedTab == AppTab.Explorer && !keyboardVisible && (search.showingResults || !browser.atRoots)) {
+        focusManager.clearFocus()
+        if (search.showingResults) onSearchBack() else onBrowserBack()
+    }
 
     Scaffold(
         modifier = modifier.fillMaxSize().imePadding(),
@@ -118,8 +137,8 @@ internal fun TP1App(
             Box {
                 AppHeader(selectedTab, onAddSource = onAddSource)
                 if (selectedTab == AppTab.Explorer &&
-                    (browser.opening || ((browser.loading || browser.pending) && files.isNotEmpty()))) {
-                    val progressLabel = stringResource(if (browser.opening) R.string.browser_opening else R.string.browser_loading)
+                    (search.opening || !search.showingResults && (browser.opening || ((browser.loading || browser.pending) && files.isNotEmpty())))) {
+                    val progressLabel = stringResource(if (search.opening || browser.opening) R.string.browser_opening else R.string.browser_loading)
                     LinearProgressIndicator(modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                         .semantics { contentDescription = progressLabel })
                 }
@@ -141,8 +160,12 @@ internal fun TP1App(
         screenState.SaveableStateProvider(selectedTab.name) {
             when (selectedTab) {
                 AppTab.Explorer -> ExplorerScreen(
-                    query = query,
-                    onQueryChange = { query = it },
+                    search = search,
+                    onSearchDraftChange = onSearchDraftChange,
+                    onSearchSubmit = onSearchSubmit,
+                    onSearchClear = onSearchClear,
+                    onSearchRetry = onSearchRetry,
+                    onSearchOpenDocument = onSearchOpenDocument,
                     files = files,
                     contentPadding = padding,
                     message = sourceMessage,

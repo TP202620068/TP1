@@ -14,6 +14,7 @@ import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.chat.ChatViewModel
+import com.example.tp1.search.SearchViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
 import com.example.tp1.sources.sourcePickerIntent
@@ -25,6 +26,7 @@ class MainActivity : ComponentActivity() {
     private val sources: SourcesViewModel by viewModels()
     private val browser: BrowserViewModel by viewModels()
     private val chat: ChatViewModel by viewModels()
+    private val search: SearchViewModel by viewModels()
     private val documents = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         receiveSources(it, SourceKind.Document)
     }
@@ -41,7 +43,7 @@ class MainActivity : ComponentActivity() {
         window.isNavigationBarContrastEnforced = false
         setContent {
             TP1Theme {
-                SourceFlow(sources, browser, chat, onPick = { kind ->
+                SourceFlow(sources, browser, chat, search, onPick = { kind ->
                     try {
                         (if (kind == SourceKind.Tree) tree else documents).launch(sourcePickerIntent(kind))
                     } catch (_: ActivityNotFoundException) {
@@ -50,6 +52,7 @@ class MainActivity : ComponentActivity() {
                 },
                     onOpen = { entry -> browser.open(entry) { startActivity(it) } },
                     onOpenChatDocument = { document -> chat.openDocument(document) { startActivity(it) } },
+                    onOpenSearchDocument = { document -> search.openDocument(document) { startActivity(it) } },
                     onRefresh = { refreshBrowser() }
                 )
             }
@@ -64,10 +67,14 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         chat.setForeground(true)
+        search.setForeground(true)
     }
 
     override fun onStop() {
-        if (!isChangingConfigurations) chat.setForeground(false)
+        if (!isChangingConfigurations) {
+            search.setForeground(false)
+            chat.setForeground(false)
+        }
         super.onStop()
     }
 

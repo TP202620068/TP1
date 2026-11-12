@@ -64,7 +64,7 @@ import com.example.tp1.chat.ChatPreparation
 import com.example.tp1.chat.ChatProblem
 import com.example.tp1.chat.ChatState
 import com.example.tp1.chat.ChatTurn
-import com.example.tp1.chat.ChatDocument
+import com.example.tp1.browser.DocumentReference
 import com.example.tp1.inference.FinishReason
 import com.example.tp1.ui.theme.TP1Theme
 import com.example.tp1.ui.theme.shellTextFieldColors
@@ -76,7 +76,7 @@ internal fun ChatScreen(
     contentPadding: PaddingValues,
     modifier: Modifier = Modifier,
     onRetry: () -> Unit = {},
-    onOpenDocument: (ChatDocument) -> Unit = {}
+    onOpenDocument: (DocumentReference) -> Unit = {}
 ) {
     val list = rememberLazyListState()
     var followOutput by rememberSaveable { mutableStateOf(true) }
@@ -117,7 +117,7 @@ internal fun ChatScreen(
 
 @Composable
 private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Modifier = Modifier,
-                            onRetry: () -> Unit = {}, onOpenDocument: (ChatDocument) -> Unit = {},
+                            onRetry: () -> Unit = {}, onOpenDocument: (DocumentReference) -> Unit = {},
                             openingDocument: Boolean = false) {
     val assistantLabel = stringResource(R.string.chat_assistant)
     var documentsExpanded by rememberSaveable(turn.id) { mutableStateOf(false) }

@@ -199,7 +199,7 @@
     public void send();
     public void stop();
     public void retry();
-    public void openDocument(com.example.tp1.chat.ChatDocument, kotlin.jvm.functions.Function1);
+    public void openDocument(com.example.tp1.browser.DocumentReference, kotlin.jvm.functions.Function1);
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatConnection {
     public <init>(kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0);
@@ -333,7 +333,11 @@
     public java.lang.String getDocumentUri();
     public boolean equals(java.lang.Object);
 }
--keep,allowoptimization class com.example.tp1.chat.ChatDocument {
+-keep,allowoptimization class com.example.tp1.browser.DocumentReference {
+    public <init>(java.lang.String, java.lang.String, java.lang.String, java.util.List);
+    public static com.example.tp1.browser.DocumentReference copy$default(com.example.tp1.browser.DocumentReference, java.lang.String, java.lang.String, java.lang.String, java.util.List, int, java.lang.Object);
+    public java.lang.String getAuthority();
+    public java.lang.String getProviderId();
     public java.lang.String getName();
     public java.util.List getAlternatives();
 }
@@ -345,7 +349,56 @@
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatContextKt {
     public static java.lang.Object prepareChatRequest(java.lang.String, java.util.List, java.util.List, kotlin.jvm.functions.Function3, kotlin.coroutines.Continuation);
-    public static java.lang.Object chatDocumentIntent(android.content.Context, com.example.tp1.chat.ChatDocument, kotlin.coroutines.Continuation);
+}
+-keep,allowoptimization class com.example.tp1.browser.DocumentReferenceKt {
+    public static java.lang.Object documentIntent(android.content.Context, com.example.tp1.browser.DocumentReference, kotlin.coroutines.Continuation);
+}
+
+# Search constructors, state and helpers called by the separate test APK.
+-keep,allowoptimization class com.example.tp1.search.SearchViewModel {
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2);
+    public <init>(android.app.Application, androidx.lifecycle.SavedStateHandle, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public kotlinx.coroutines.flow.StateFlow getState();
+    public void editDraft(java.lang.String);
+    public void submit();
+    public void retry();
+    public void setSelected(boolean);
+    public void setForeground(boolean);
+    public void setSources(java.util.List, boolean);
+    public void setIndexing(com.example.tp1.indexing.IndexingState);
+    public void exitResults();
+    public void clear();
+    public void openDocument(com.example.tp1.browser.DocumentReference, kotlin.jvm.functions.Function1);
+}
+-keep,allowoptimization class com.example.tp1.search.SearchState {
+    public <init>(java.lang.String, java.lang.String, long, com.example.tp1.search.SearchPhase, java.util.List, boolean, com.example.tp1.search.SearchProblem, boolean, com.example.tp1.browser.BrowserProblem, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public static com.example.tp1.search.SearchState copy$default(com.example.tp1.search.SearchState, java.lang.String, java.lang.String, long, com.example.tp1.search.SearchPhase, java.util.List, boolean, com.example.tp1.search.SearchProblem, boolean, com.example.tp1.browser.BrowserProblem, int, java.lang.Object);
+    public static final int $stable;
+    public java.lang.String getDraft();
+    public java.lang.String getSubmitted();
+    public com.example.tp1.search.SearchPhase getPhase();
+    public java.util.List getRows();
+    public boolean getInputInvalid();
+    public com.example.tp1.search.SearchProblem getProblem();
+    public boolean getOpening();
+    public com.example.tp1.browser.BrowserProblem getOpenProblem();
+    public boolean getShowingResults();
+}
+-keep,allowoptimization class com.example.tp1.search.SearchRow {
+    public <init>(com.example.tp1.browser.DocumentReference, java.lang.String);
+    public com.example.tp1.search.SearchRow copy(com.example.tp1.browser.DocumentReference, java.lang.String);
+    public com.example.tp1.browser.DocumentReference getDocument();
+    public java.lang.String getExcerpt();
+    public boolean equals(java.lang.Object);
+}
+-keep,allowoptimization class com.example.tp1.search.SearchStateKt {
+    public static java.util.List searchRows(java.util.List);
+}
+-keep,allowoptimization enum com.example.tp1.search.SearchPhase { public static com.example.tp1.search.SearchPhase *; }
+-keep,allowoptimization enum com.example.tp1.search.SearchProblem {
+    public static com.example.tp1.search.SearchProblem *;
+    public static com.example.tp1.search.SearchProblem[] values();
+    public static kotlin.enums.EnumEntries getEntries();
 }
 -keep,allowoptimization enum com.example.tp1.chat.ChatOpenProblem { public static com.example.tp1.chat.ChatOpenProblem *; }
 -keep,allowoptimization class com.example.tp1.inference.ModelArtifact { public java.lang.String getSha256(); }

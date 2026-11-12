@@ -1,5 +1,6 @@
 package com.example.tp1.chat
 
+import com.example.tp1.browser.DocumentReference
 import com.example.tp1.inference.ChatMessage
 import com.example.tp1.inference.ChatRole
 import com.example.tp1.inference.FinishReason
@@ -23,7 +24,7 @@ internal data class ChatTurn(
     val running: Boolean = false,
     val finish: FinishReason? = null,
     val failed: Boolean = false,
-    val documents: List<ChatDocument> = emptyList()
+    val documents: List<DocumentReference> = emptyList()
 ) {
     val canRetry: Boolean get() = !running && (failed || finish in setOf(
         FinishReason.DEADLINE, FinishReason.NATIVE_FAILURE))

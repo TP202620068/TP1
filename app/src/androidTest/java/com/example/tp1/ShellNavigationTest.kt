@@ -47,7 +47,7 @@ class ShellNavigationTest {
     @Test
     fun tabsAndTypedTextSurviveActivityRecreation() {
         compose.onNode(hasText("Explorador") and hasClickAction()).assertIsSelected()
-        compose.onNodeWithContentDescription("Buscar archivos").performTextInput("documentos")
+        compose.onNodeWithContentDescription("Buscar contenido").performTextInput("documentos")
         compose.waitUntil(5_000) {
             ViewCompat.getRootWindowInsets(compose.activity.window.decorView)
                 ?.isVisible(WindowInsetsCompat.Type.ime()) == true
@@ -90,7 +90,7 @@ class ShellNavigationTest {
         compose.onNode(hasText("Chat") and hasClickAction()).assertIsSelected()
         compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("¿Qué dice mi contrato?")
         compose.onNode(hasText("Explorador") and hasClickAction()).performClick().assertIsSelected()
-        compose.onNodeWithContentDescription("Buscar archivos").assertTextEquals("documentos")
+        compose.onNodeWithContentDescription("Buscar contenido").assertTextEquals("documentos")
         compose.onNode(hasText("Chat") and hasClickAction()).performClick()
         compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("¿Qué dice mi contrato?")
         compose.runOnIdle { compose.activity.window.insetsController?.hide(android.view.WindowInsets.Type.ime()) }
@@ -105,7 +105,7 @@ class ShellNavigationTest {
         compose.onNodeWithText("Añadir").performClick()
         compose.onNodeWithText("Listo").performScrollTo().performClick()
         compose.onNode(hasText("Explorador") and hasClickAction()).assertIsSelected()
-        compose.onNodeWithContentDescription("Buscar archivos").assertTextEquals("documentos")
+        compose.onNodeWithContentDescription("Buscar contenido").assertTextEquals("documentos")
         compose.onNode(hasText("Chat") and hasClickAction()).performClick()
         compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("¿Qué dice mi contrato?")
     }

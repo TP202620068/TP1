@@ -9,10 +9,14 @@ import androidx.test.runner.lifecycle.ActivityLifecycleCallback
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.example.tp1.chat.ChatViewModel
+import com.example.tp1.search.SearchViewModel
+import com.example.tp1.indexing.RetrievalResult
 import kotlinx.coroutines.awaitCancellation
 import org.junit.rules.ExternalResource
 
-class OfflineChatRule : ExternalResource() {
+class OfflineChatRule internal constructor(
+    private val searchRetrieve: suspend (String) -> RetrievalResult = { error("Navigation test must not load retrieval weights") }
+) : ExternalResource() {
     private val indexing = OfflineIndexingRule()
     private val callback = ActivityLifecycleCallback { activity, stage ->
         if (activity is MainActivity && stage == Stage.CREATED) {
@@ -25,6 +29,11 @@ class OfflineChatRule : ExternalResource() {
                         retrieve = { error("Navigation test must not load retrieval weights") })
                 }
             })[ChatViewModel::class.java]
+            ViewModelProvider(activity, viewModelFactory {
+                initializer {
+                    SearchViewModel(activity.application, createSavedStateHandle(), retrieve = searchRetrieve, checkContext = {})
+                }
+            })[SearchViewModel::class.java]
         }
     }
 

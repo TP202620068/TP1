@@ -19,7 +19,8 @@ import com.example.tp1.R
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.chat.ChatViewModel
-import com.example.tp1.chat.ChatDocument
+import com.example.tp1.browser.DocumentReference
+import com.example.tp1.search.SearchViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
 import com.example.tp1.ui.screens.SourceSelectionScreen
@@ -29,19 +30,27 @@ internal fun SourceFlow(
     viewModel: SourcesViewModel,
     browser: BrowserViewModel,
     chat: ChatViewModel,
+    search: SearchViewModel,
     onPick: (SourceKind) -> Unit,
     onOpen: (BrowserEntry) -> Unit,
-    onOpenChatDocument: (ChatDocument) -> Unit,
+    onOpenChatDocument: (DocumentReference) -> Unit,
+    onOpenSearchDocument: (DocumentReference) -> Unit,
     onRefresh: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
     val browsing by browser.state.collectAsState()
     val chatting by chat.state.collectAsState()
+    val searching by search.state.collectAsState()
     val indexing by viewModel.indexing.collectAsState()
     val shellState = rememberSaveableStateHolder()
     LaunchedEffect(state.sources, state.restoring) {
         if (!state.restoring) browser.setSources(state.sources)
     }
+    LaunchedEffect(state.sources, state.restoring, state.storageReady, state.selecting) {
+        search.setSources(state.sources, ready = !state.restoring && state.storageReady)
+        if (state.selecting || state.restoring) search.setSelected(false)
+    }
+    LaunchedEffect(indexing) { search.setIndexing(indexing) }
     Surface(color = MaterialTheme.colorScheme.background) {
         when {
             state.restoring -> Box(Modifier.fillMaxSize().safeDrawingPadding(), contentAlignment = Alignment.Center) {
@@ -85,10 +94,19 @@ internal fun SourceFlow(
                     onBrowserBack = browser::back,
                     onRetry = onRefresh,
                     onMessageDismissed = browser::dismissMessage,
-                    onAddSource = viewModel::selectSources,
+                    onAddSource = { search.setSelected(false); viewModel.selectSources() },
                     sourceMessage = state.message?.let { stringResource(it) },
                     indexing = indexing,
-                    onRetryIndexing = viewModel::retryIndexing
+                    onRetryIndexing = viewModel::retryIndexing,
+                    search = searching,
+                    onExplorerSelected = search::setSelected,
+                    onSearchDraftChange = search::editDraft,
+                    onSearchSubmit = search::submit,
+                    onSearchClear = search::clear,
+                    onSearchBack = search::exitResults,
+                    onSearchRetry = search::retry,
+                    onSearchOpenDocument = onOpenSearchDocument,
+                    onSearchOpenProblemDismissed = search::dismissOpenProblem
                 )
             }
         }

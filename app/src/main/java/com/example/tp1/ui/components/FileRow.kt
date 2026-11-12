@@ -37,6 +37,7 @@ internal data class FileListItem(
 internal fun FileRow(
     item: FileListItem,
     modifier: Modifier = Modifier,
+    metadataMaxLines: Int = 1,
     trailingContent: @Composable () -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
@@ -88,7 +89,7 @@ internal fun FileRow(
                         text = metadata,
                         style = MaterialTheme.typography.bodySmall,
                         color = colors.onSurfaceVariant,
-                        maxLines = 1,
+                        maxLines = metadataMaxLines,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

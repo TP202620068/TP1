@@ -8,6 +8,8 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
+import com.example.tp1.browser.DocumentReference
+import com.example.tp1.browser.documentIntent
 import com.example.tp1.inference.ChatMessage
 import com.example.tp1.inference.FinishReason
 import com.example.tp1.inference.GenerationEvent
@@ -265,12 +267,12 @@ internal class ChatViewModel(
         submission?.cancel()
     }
 
-    fun openDocument(document: ChatDocument, launch: (Intent) -> Unit) {
+    fun openDocument(document: DocumentReference, launch: (Intent) -> Unit) {
         if (cleared || state.value.openingDocument || state.value.turns.none { document in it.documents }) return
         mutableState.value = state.value.copy(openingDocument = true, openProblem = null)
         viewModelScope.launch {
             try {
-                val intent = chatDocumentIntent(getApplication(), document)
+                val intent = documentIntent(getApplication(), document)
                 currentCoroutineContext().ensureActive()
                 launch(intent)
             } catch (error: CancellationException) { throw error }

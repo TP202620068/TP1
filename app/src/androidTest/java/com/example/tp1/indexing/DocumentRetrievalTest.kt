@@ -224,13 +224,13 @@ class DocumentRetrievalTest {
         val footer = prepared.documents.single()
         assertEquals(2, footer.alternatives.size)
         sources.remove(sources.restore().sources, document.record.uri)
-        val intent = com.example.tp1.chat.chatDocumentIntent(context, footer)
+        val intent = com.example.tp1.browser.documentIntent(context, footer)
         assertEquals(Intent.ACTION_VIEW, intent.action)
         assertEquals(child.uri, intent.data.toString())
         assertEquals(Intent.FLAG_GRANT_READ_URI_PERMISSION, intent.flags)
         assertEquals(intent.data, intent.clipData!!.getItemAt(0).uri)
         sources.remove(sources.restore().sources, treeUri)
-        failure<SecurityException> { com.example.tp1.chat.chatDocumentIntent(context, footer) }
+        failure<SecurityException> { com.example.tp1.browser.documentIntent(context, footer) }
     }
 
     @Test fun chatOpeningReportsMissingViewerAndRevokedFooterWithoutLaunching() = runBlocking<Unit> {
@@ -277,6 +277,31 @@ class DocumentRetrievalTest {
             store.discard(pending)
             assertEquals("staged", matches().single().text)
         }
+    }
+
+    @Test fun searchOpeningRechecksProviderGrantAndReportsViewerFailureWithoutTrustingCachedRows() = runBlocking<Unit> {
+        val source = select()
+        seed(source, listOf("indexed excerpt" to vector()))
+        val retrieval = retriever()
+        val search = withContext(Dispatchers.Main) {
+            com.example.tp1.search.SearchViewModel(application, SavedStateHandle(),
+                retrieve = { retrieval.retrieve(it, k = 5) }, checkContext = retrieval::checkContext,
+                intentForDocument = { com.example.tp1.browser.documentIntent(context, it) }).also {
+                owners.put("search", it)
+                it.setForeground(true); it.setSelected(true); it.editDraft("question"); it.submit()
+            }
+        }
+        withTimeout(5_000) { while (search.state.value.phase != com.example.tp1.search.SearchPhase.Idle) delay(5) }
+        val row = search.state.value.rows.single()
+        withContext(Dispatchers.Main) { search.openDocument(row.document) { throw android.content.ActivityNotFoundException() } }
+        withTimeout(5_000) { while (search.state.value.opening) delay(5) }
+        assertEquals(com.example.tp1.browser.BrowserProblem.NoViewer, search.state.value.openProblem)
+        resolver.releasePersistableUriPermission(Uri.parse(source.record.uri), Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        withContext(Dispatchers.Main) { search.openDocument(row.document) { fail("Revoked search result launched") } }
+        withTimeout(5_000) { while (search.state.value.opening) delay(5) }
+        assertEquals(com.example.tp1.browser.BrowserProblem.Access, search.state.value.openProblem)
+        assertEquals(com.example.tp1.search.SearchProblem.Changed, search.state.value.problem)
+        assertTrue(search.state.value.rows.isEmpty())
     }
 
     @Test fun corruptNonWinningVectorsIncompleteBuildsAndOrdinalGapsFailExplicitly() = runBlocking<Unit> {

@@ -89,7 +89,8 @@ class EmbeddingSessionTest {
 
             val fullInput = "a" + " a".repeat(1020)
             assertEquals(1024, engine.testEmbeddingTokens(embeddingInput(fullInput, query = false)).size)
-            assertVector(session.embedDocument(fullInput))
+            try { assertVector(session.embedDocument(fullInput)) }
+            catch (error: IOException) { throw AssertionError("Default-limit 1024-token document embedding failed", error) }
             val input = embeddingInput("Unicode 😀 <|begin_of_text|> <|end_of_text|>", query = false)
             val tokens = engine.testEmbeddingTokens(input)
             assertEquals(128001, tokens.last())
