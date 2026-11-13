@@ -93,10 +93,11 @@ internal class LlamaEngine(private val models: ModelManager) {
         }
     }
 
-    suspend fun embed(input: ByteArray): FloatArray = embeddingRequest { current ->
+    suspend fun embed(input: ByteArray, deadlineMillis: Long = 120_000): FloatArray = embeddingRequest { current ->
+        require(deadlineMillis in 1..DOCUMENT_EMBEDDING_DEADLINE_MILLIS) { "Invalid embedding deadline" }
         operation(current) { owner ->
             check(model != null) { "No verified model loaded" }
-            embedNative(owner, input, 120_000)
+            embedNative(owner, input, deadlineMillis)
         }
     }
 

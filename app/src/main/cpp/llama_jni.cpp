@@ -400,7 +400,7 @@ jint count_embedding_tokens(JNIEnv * env, jobject, jlong handle, jbyteArray inpu
 jfloatArray embed(JNIEnv * env, jobject, jlong handle, jbyteArray input, jlong milliseconds) {
     return boundary(env, [&] {
         auto & value = owner(handle);
-        if (milliseconds < 1 || milliseconds > 120000) throw std::invalid_argument("Invalid embedding deadline");
+        if (milliseconds < 1 || milliseconds > 600000) throw std::invalid_argument("Invalid embedding deadline");
         auto tokens = embedding_tokens(value, bytes(env, input, text_limit));
         value.reset();
         value.expires = Clock::now() + std::chrono::milliseconds(milliseconds);

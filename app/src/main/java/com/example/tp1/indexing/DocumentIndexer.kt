@@ -1,6 +1,7 @@
 package com.example.tp1.indexing
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.extraction.DocumentExtractor
@@ -8,11 +9,13 @@ import com.example.tp1.extraction.ExtractedDocument
 import com.example.tp1.extraction.ExtractionWork
 import com.example.tp1.extraction.MarkdownChunk
 import com.example.tp1.inference.EmbeddingSession
+import com.example.tp1.inference.DOCUMENT_EMBEDDING_DEADLINE_MILLIS
 import com.example.tp1.inference.Model
 import com.example.tp1.inference.ModelManager
 import com.example.tp1.inference.NativeWorkHandoff
 import com.example.tp1.sources.SelectedSource
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -49,76 +52,109 @@ internal class DocumentIndexer(
 
     suspend fun index(source: SelectedSource, entry: BrowserEntry, refresh: Boolean = false): IndexResult =
         withContext(Dispatchers.IO) {
-            val opened = try { IndexStore(context) }
-            catch (error: java.io.IOException) { throw IndexStorageFailure(error) }
-            opened.use { store ->
-                val coroutine = currentCoroutineContext()
-                val ticket = synchronized(ExtractionWork.sourceLock) {
-                    coroutine.ensureActive()
-                    checkAdmission()
-                    store.request(source, entry)
-                }
-                NativeWorkHandoff.documents.withLock {
-                    val handoff = Any()
-                    var embeddings: IndexEmbeddings? = null
-                    var candidate: IndexStore.Candidate? = null
-                    try {
-                        val modelHash = models.profile(Model.JinaV5NanoRetrieval).artifact.sha256
-                        val cached = synchronized(ExtractionWork.sourceLock) {
-                            coroutine.ensureActive()
-                            store.active(ticket)?.takeIf {
-                                !refresh && it.identity.modelSha256 == modelHash && it.identity.maxInputTokens == maxInputTokens
-                            }?.also { store.verify(ticket) }
-                        }
-                        if (cached != null) return@withLock IndexResult.Complete(
-                            cached.documentId, cached.generation, cached.count, unchanged = true)
-                        if (!NativeWorkHandoff.acquire(handoff)) return@withLock IndexResult.Busy
-                        store.checkCurrent(ticket)
-                        // Extraction returns bounded text and removes its temporary files before Jina is opened.
-                        val extracted = extract(source, entry)
-                        val identity = IndexIdentity(extracted.displayName, extracted.inputSha256, modelHash, maxInputTokens)
-                        validateIdentity(identity)
-                        val unchanged = synchronized(ExtractionWork.sourceLock) {
-                            coroutine.ensureActive()
-                            store.active(ticket)?.takeIf {
-                                it.identity == identity.copy(displayName = it.identity.displayName)
-                            }?.also { store.verify(ticket) }
-                        }
-                        if (unchanged != null) return@withLock IndexResult.Complete(
-                            unchanged.documentId, unchanged.generation, unchanged.count, unchanged = true)
-                        store.checkCurrent(ticket)
-                        embeddings = try { openEmbeddings(maxInputTokens) }
-                        catch (error: kotlinx.coroutines.CancellationException) { throw error }
-                        catch (error: Exception) { throw IndexModelFailure(error) }
-                        val chunks = embeddings.chunk(extracted.markdown)
-                        candidate = store.stage(ticket)
-                        for ((ordinal, chunk) in chunks.withIndex()) {
-                            coroutine.ensureActive()
-                            val vector = embeddings.embed(chunk.text)
-                            coroutine.ensureActive()
-                            store.append(candidate, ordinal, chunk, vector, maxInputTokens)
-                            Log.i("TP1Index", "chunk=$ordinal inputTokens=${chunk.inputTokens}")
-                        }
-                        synchronized(ExtractionWork.sourceLock) {
-                            checkAdmission()
-                            store.publish(candidate, identity, chunks.size, coroutine)
-                        }
-                        IndexResult.Complete(candidate.documentId, candidate.generation, chunks.size, unchanged = false)
-                    } finally {
-                        withContext(NonCancellable) {
-                            try {
-                                embeddings?.close?.invoke()
-                            } finally {
+            val diagnostics = IndexingDiagnostics(log = { message, error ->
+                if (error == null) Log.i("TP1Index", message)
+                else if (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) Log.e("TP1Index", message, error)
+                else Log.e("TP1Index", message)
+            })
+            diagnostics.start("storage")
+            try {
+                val opened = try { IndexStore(context) }
+                catch (error: java.io.IOException) { throw IndexStorageFailure(error) }
+                val result = opened.use { store ->
+                    val coroutine = currentCoroutineContext()
+                    val ticket = synchronized(ExtractionWork.sourceLock) {
+                        coroutine.ensureActive()
+                        checkAdmission()
+                        store.request(source, entry)
+                    }
+                    diagnostics.request = ticket.request
+                    diagnostics.start("waiting_for_native")
+                    NativeWorkHandoff.documents.withLock {
+                        val handoff = Any()
+                        var embeddings: IndexEmbeddings? = null
+                        var candidate: IndexStore.Candidate? = null
+                        try {
+                            diagnostics.start("cache_lookup")
+                            val modelHash = models.profile(Model.JinaV5NanoRetrieval).artifact.sha256
+                            val cached = synchronized(ExtractionWork.sourceLock) {
+                                coroutine.ensureActive()
+                                store.active(ticket)?.takeIf {
+                                    !refresh && it.identity.modelSha256 == modelHash && it.identity.maxInputTokens == maxInputTokens
+                                }?.also { store.verify(ticket) }
+                            }
+                            if (cached != null) return@withLock IndexResult.Complete(
+                                cached.documentId, cached.generation, cached.count, unchanged = true)
+                            diagnostics.start("handoff")
+                            if (!NativeWorkHandoff.acquire(handoff)) return@withLock IndexResult.Busy
+                            store.checkCurrent(ticket)
+                            diagnostics.start("extraction")
+                            // Extraction returns bounded text and removes its temporary files before Jina is opened.
+                            val extracted = extract(source, entry)
+                            diagnostics.report("extracted")
+                            val identity = IndexIdentity(extracted.displayName, extracted.inputSha256, modelHash, maxInputTokens)
+                            validateIdentity(identity)
+                            val unchanged = synchronized(ExtractionWork.sourceLock) {
+                                coroutine.ensureActive()
+                                store.active(ticket)?.takeIf {
+                                    it.identity == identity.copy(displayName = it.identity.displayName)
+                                }?.also { store.verify(ticket) }
+                            }
+                            if (unchanged != null) return@withLock IndexResult.Complete(
+                                unchanged.documentId, unchanged.generation, unchanged.count, unchanged = true)
+                            store.checkCurrent(ticket)
+                            diagnostics.start("model_loading", "maxInputTokens=$maxInputTokens")
+                            embeddings = try { openEmbeddings(maxInputTokens) }
+                            catch (error: CancellationException) { throw error }
+                            catch (error: Exception) { throw IndexModelFailure(error) }
+                            diagnostics.start("chunking")
+                            val chunks = embeddings.chunk(extracted.markdown)
+                            diagnostics.start("staging", "chunks=${chunks.size}")
+                            candidate = store.stage(ticket)
+                            for ((ordinal, chunk) in chunks.withIndex()) {
+                                coroutine.ensureActive()
+                                val progress = "chunk=${ordinal + 1}/${chunks.size} inputTokens=${chunk.inputTokens}"
+                                diagnostics.start("embedding", "$progress deadlineMs=$DOCUMENT_EMBEDDING_DEADLINE_MILLIS")
+                                val vector = embeddings.embed(chunk.text)
+                                diagnostics.report("embedded")
+                                coroutine.ensureActive()
+                                diagnostics.start("write_chunk", progress)
+                                store.append(candidate, ordinal, chunk, vector, maxInputTokens)
+                            }
+                            diagnostics.start("publishing", "chunks=${chunks.size}")
+                            synchronized(ExtractionWork.sourceLock) {
+                                checkAdmission()
+                                store.publish(candidate, identity, chunks.size, coroutine)
+                            }
+                            IndexResult.Complete(candidate.documentId, candidate.generation, chunks.size, unchanged = false)
+                        } finally {
+                            withContext(NonCancellable) {
                                 try {
-                                    candidate?.let { store.discard(it) }
-                                    store.retireObsolete()
-                                } catch (_: Exception) {
-                                    Log.w("TP1Index", "Generation cleanup deferred")
-                                } finally { NativeWorkHandoff.release(handoff) }
+                                    try { embeddings?.close?.invoke() }
+                                    catch (error: Exception) { diagnostics.report("model_close_failed", error); throw error }
+                                } finally {
+                                    try {
+                                        candidate?.let { store.discard(it) }
+                                        store.retireObsolete()
+                                    } catch (error: Exception) {
+                                        diagnostics.report("cleanup_deferred", error)
+                                    } finally { NativeWorkHandoff.release(handoff) }
+                                }
                             }
                         }
                     }
                 }
+                diagnostics.report(when (result) {
+                    is IndexResult.Complete -> if (result.unchanged) "unchanged" else "completed"
+                    IndexResult.Busy -> "waiting_for_chat"
+                })
+                result
+            } catch (error: CancellationException) {
+                diagnostics.report("cancelled")
+                throw error
+            } catch (error: Exception) {
+                diagnostics.report("failed", error)
+                throw error
             }
         }
 }

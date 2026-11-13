@@ -128,6 +128,24 @@ class EmbeddingSessionTest {
         assertReleased()
     }
 
+    @Test fun extendedDocumentDeadlineIsAcceptedAndStillCancellable() = runBlocking<Unit> {
+        val engine = LlamaEngine(models)
+        val session = EmbeddingSession.open(engine, maxInputTokens = 32)
+        try {
+            val input = embeddingInput("A document with a longer processing budget.", query = false)
+            assertVector(engine.embed(input, DOCUMENT_EMBEDDING_DEADLINE_MILLIS))
+            for (invalid in listOf(0L, -1L, DOCUMENT_EMBEDDING_DEADLINE_MILLIS + 1)) {
+                try { engine.embed(input, invalid); fail("Invalid deadline accepted: $invalid") }
+                catch (_: IllegalArgumentException) { }
+            }
+            engine.testControl(pausePhase = 2)
+            val pending = async(Dispatchers.IO) { session.embedDocument("Cancel a long-budget document request.") }
+            try { paused(engine) } finally { withTimeout(60_000) { pending.cancelAndJoin() } }
+            assertVector(session.embedQuery("Healthy query after cancellation."))
+        } finally { session.close() }
+        assertReleased()
+    }
+
     @Test fun tokenCountingMatchesEncodingButAcceptsOversizedCandidatesWithoutEncoding() = runBlocking<Unit> {
         val engine = LlamaEngine(models)
         val session = EmbeddingSession.open(engine, maxInputTokens = 32)

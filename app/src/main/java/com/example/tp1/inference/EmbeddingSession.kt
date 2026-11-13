@@ -12,11 +12,13 @@ import kotlinx.coroutines.withContext
 
 internal const val EMBEDDING_INPUT_BYTES = 64 * 1024
 internal const val EMBEDDING_DOCUMENT_PREFIX = "Document: "
+internal const val DOCUMENT_EMBEDDING_DEADLINE_MILLIS = 600_000L
 
 /** One loaded Jina owner. Requests are independent; concurrent requests and other loaded models are rejected. */
 internal class EmbeddingSession private constructor(private val engine: LlamaEngine, val maxInputTokens: Int) {
     /** Adds Document: internally. Returns 512 finite, L2-normalized floats. Never truncates input. */
-    suspend fun embedDocument(chunk: String): FloatArray = engine.embed(embeddingInput(chunk, query = false))
+    suspend fun embedDocument(chunk: String): FloatArray =
+        engine.embed(embeddingInput(chunk, query = false), DOCUMENT_EMBEDDING_DEADLINE_MILLIS)
 
     /** Adds Query: internally, using the same retrieval weights as documents. */
     suspend fun embedQuery(query: String): FloatArray = engine.embed(embeddingInput(query, query = true))

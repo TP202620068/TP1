@@ -382,12 +382,12 @@ class ChatInteractionTest {
         awaitReady()
         send("Respuesta larga")
         compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.answer?.isNotEmpty() == true }
-        val notice = compose.onNodeWithText("Chat local con documentos indexados. El modelo puede equivocarse.")
+        val message = compose.onNodeWithText("Respuesta larga")
         compose.onNode(hasScrollToIndexAction()).performScrollToIndex(0)
-        notice.assertIsDisplayed()
+        message.assertIsDisplayed()
         compose.runOnIdle { finish.complete(Unit) }
         compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
-        notice.assertIsDisplayed()
+        message.assertIsDisplayed()
         compose.onNodeWithContentDescription("Enviar pregunta").assertIsDisplayed()
     }
 

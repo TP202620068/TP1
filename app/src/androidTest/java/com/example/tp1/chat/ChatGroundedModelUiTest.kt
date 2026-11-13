@@ -149,7 +149,7 @@ class ChatGroundedModelUiTest {
         } })
         assertEquals(PreparedChatRequest(messages, injected).documents, turn.documents)
         assertEquals("How long is the warranty coverage?", turn.input)
-        compose.onNodeWithContentDescription("Documentos: ${turn.documents.size}").performClick()
+        compose.onNodeWithContentDescription("Fuentes: ${turn.documents.size}").performClick()
         compose.onNodeWithText("warranty.rtf").assertIsDisplayed()
         compose.activityRule.scenario.recreate()
         compose.onNodeWithText("warranty.rtf").assertIsDisplayed()

@@ -33,6 +33,9 @@ abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations
     }
 
     @TaskAction fun buildNative() {
+        val cargoPath = File(System.getProperty("user.home"), ".cargo/bin/cargo").let {
+            if (it.exists()) it.absolutePath else "cargo"
+        }
         val crate = crateDirectory.get().asFile
         if (!crate.resolve("Cargo.lock").isFile) {
             throw GradleException("Missing anydoc-jni/Cargo.lock. See dependency setup in ANYDOC_INTEGRATION.md.")
@@ -40,7 +43,7 @@ abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations
         val version = ByteArrayOutputStream()
         exec.exec {
             workingDir(crate)
-            commandLine("cargo", "ndk", "--version")
+            commandLine(cargoPath, "ndk", "--version")
             standardOutput = version
         }
         if (version.toString(Charsets.UTF_8.name()).trim() != "cargo-ndk ${cargoNdkVersion.get()}") {
@@ -48,7 +51,7 @@ abstract class CargoNdkTask @Inject constructor(private val exec: ExecOperations
         }
         val output = outputDirectory.get().asFile
         if (output.exists() && !output.deleteRecursively()) throw GradleException("Cannot clear Cargo JNI staging output")
-        val arguments = mutableListOf("cargo", "ndk")
+        val arguments = mutableListOf(cargoPath, "ndk")
         abis.get().forEach { arguments += listOf("-t", it) }
         arguments += listOf("--platform", api.get().toString(), "-o", output.absolutePath, "build", "--locked", "--lib")
         if (release.get()) arguments += "--release"
@@ -103,7 +106,12 @@ android {
 
     buildTypes {
         debug {
-            externalNativeBuild { cmake { arguments += "-DTP1_LLAMA_TEST_HOOKS=ON" } }
+            externalNativeBuild {
+                cmake {
+                    // Keep Android debugging and native symbols without unoptimized inference.
+                    arguments += listOf("-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DTP1_LLAMA_TEST_HOOKS=ON")
+                }
+            }
         }
         release {
             externalNativeBuild { cmake { arguments += "-DTP1_LLAMA_TEST_HOOKS=${if (releaseInstrumentation) "ON" else "OFF"}" } }

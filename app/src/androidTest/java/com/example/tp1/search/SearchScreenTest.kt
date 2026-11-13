@@ -42,7 +42,7 @@ class SearchScreenTest {
                 "source" to SourceIndexingState(discovering = false, pending = 1, completed = 1))))
         } }
         compose.onNodeWithText("Buscando en documentos indexados…").assertIsDisplayed()
-        compose.onNodeWithText("Documentos pendientes de indexación").assertIsDisplayed()
+        compose.onNodeWithText("Indexando documentos 1/2").assertIsDisplayed()
         compose.onNodeWithText("Sin archivos").assertDoesNotExist()
         compose.runOnIdle { state = state.copy(phase = SearchPhase.Idle) }
         compose.onNodeWithText("Sin resultados").assertIsDisplayed()

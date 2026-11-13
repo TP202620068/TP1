@@ -48,7 +48,8 @@
     public boolean getTestPaused();
     public java.lang.Object load(com.example.tp1.inference.Model, kotlin.coroutines.Continuation);
     public java.lang.Object loadEmbedding(int, kotlin.coroutines.Continuation);
-    public java.lang.Object embed(byte[], kotlin.coroutines.Continuation);
+    public java.lang.Object embed(byte[], long, kotlin.coroutines.Continuation);
+    public static java.lang.Object embed$default(com.example.tp1.inference.LlamaEngine, byte[], long, kotlin.coroutines.Continuation, int, java.lang.Object);
     public java.lang.Object countEmbeddingTokens(byte[], kotlin.coroutines.Continuation);
     public java.lang.Object withEmbeddingTokenCounter(kotlin.jvm.functions.Function2, kotlin.coroutines.Continuation);
     public java.lang.Object testEmbeddingTokens(byte[], kotlin.coroutines.Continuation);
@@ -429,6 +430,7 @@
 }
 -keep,allowoptimization class com.example.tp1.indexing.SourceIndexingState {
     public <init>(boolean, int, boolean, boolean, int, java.util.List, boolean, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public static com.example.tp1.indexing.SourceIndexingState copy$default(com.example.tp1.indexing.SourceIndexingState, boolean, int, boolean, boolean, int, java.util.List, boolean, int, java.lang.Object);
     public boolean getDiscovering();
     public int getPending();
     public boolean getRunning();

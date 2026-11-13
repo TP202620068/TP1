@@ -7,8 +7,11 @@ import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -16,6 +19,7 @@ import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
 import com.example.tp1.inference.FinishReason
 import com.example.tp1.browser.DocumentReference
 import com.example.tp1.ui.AppTab
@@ -43,7 +47,7 @@ class ChatDocumentsTest {
                 onChatOpenDocument = { opened = it }) }
         }
         compose.onNodeWithText("a.txt").assertDoesNotExist()
-        val button = compose.onNodeWithContentDescription("Documentos: 2")
+        val button = compose.onNodeWithContentDescription("Fuentes: 2")
         button.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Lista contraída"))
         button.performClick()
         button.assert(SemanticsMatcher.expectValue(SemanticsProperties.StateDescription, "Lista expandida"))
@@ -60,16 +64,43 @@ class ChatDocumentsTest {
         compose.onNodeWithText("a.txt").assertDoesNotExist()
     }
 
-    @Test fun footerAppearsOnlyAfterVisibleAnswerStopsAndErrorsAreVisibleInsideChat() {
+    @Test fun sourcesBubbleIsSeparateFromAnswerAndExpansionDoesNotResizeAnswer() {
+        compose.setContent { TP1Theme { TP1App(initialTab = AppTab.Chat, chat = ChatState(turns = listOf(
+            ChatTurn(1, "question", "answer", finish = FinishReason.EOG, documents = documents())))) } }
+        val assistant = compose.onNodeWithContentDescription("Asistente")
+        val button = compose.onNodeWithContentDescription("Fuentes: 2")
+        val answerBounds = assistant.fetchSemanticsNode().boundsInRoot
+        button.assertHeightIsAtLeast(48.dp)
+        button.assert(hasAnyAncestor(hasContentDescription("Asistente")).not())
+        compose.onNodeWithText("Fuentes").assertIsDisplayed()
+        assertTrue(button.fetchSemanticsNode().boundsInRoot.top > answerBounds.bottom)
+
+        button.performClick()
+        compose.onAllNodesWithText("a.txt").assertCountEquals(2)
+        compose.onAllNodesWithText("a.txt")[0].assert(hasAnyAncestor(hasContentDescription("Asistente")).not())
+        compose.onNodeWithText("Documentos enviados al modelo como contexto.").assertDoesNotExist()
+        assertEquals(answerBounds, assistant.fetchSemanticsNode().boundsInRoot)
+        assertTrue(button.fetchSemanticsNode().boundsInRoot.top > answerBounds.bottom)
+
+        button.performClick()
+        compose.onNodeWithText("a.txt").assertDoesNotExist()
+        assertEquals(answerBounds, assistant.fetchSemanticsNode().boundsInRoot)
+    }
+
+    @Test fun sourcesAppearOnlyAfterVisibleAnswerStopsAndErrorsAreVisibleInsideChat() {
         var state by mutableStateOf(ChatState(turns = listOf(ChatTurn(1, "question", "partial", running = true,
             documents = documents()))))
         compose.setContent { TP1Theme { TP1App(initialTab = AppTab.Chat, chat = state) } }
-        compose.onNodeWithContentDescription("Documentos: 2").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Fuentes: 2").assertDoesNotExist()
         compose.runOnIdle { state = state.copy(turns = listOf(state.turns.single().copy(running = false,
             finish = FinishReason.CANCELLED))) }
-        compose.onNodeWithContentDescription("Documentos: 2").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Fuentes: 2").assertIsDisplayed()
+        compose.runOnIdle { state = state.copy(turns = listOf(state.turns.single().copy(documents = emptyList()))) }
+        compose.onNodeWithText("Fuentes").assertDoesNotExist()
+        compose.runOnIdle { state = state.copy(turns = listOf(state.turns.single().copy(documents = documents()))) }
+        compose.onNodeWithContentDescription("Fuentes: 2").assertIsDisplayed()
         compose.runOnIdle { state = state.copy(turns = listOf(state.turns.single().copy(answer = ""))) }
-        compose.onNodeWithContentDescription("Documentos: 2").assertDoesNotExist()
+        compose.onNodeWithContentDescription("Fuentes: 2").assertDoesNotExist()
         compose.runOnIdle { state = state.copy(openProblem = ChatOpenProblem.NoViewer) }
         compose.onNodeWithText("No hay una aplicación compatible para abrir este archivo.").assertIsDisplayed()
     }

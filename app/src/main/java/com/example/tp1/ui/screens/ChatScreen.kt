@@ -1,9 +1,11 @@
 package com.example.tp1.ui.screens
 
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +18,7 @@ import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -29,6 +32,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.Stop
 import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
@@ -89,7 +95,7 @@ internal fun ChatScreen(
     LaunchedEffect(state.turns) {
         val added = state.turns.size > previousCount
         previousCount = state.turns.size
-        if ((followOutput || added) && !list.isScrollInProgress) list.scrollToItem(state.turns.size + 1)
+        if ((followOutput || added) && !list.isScrollInProgress) list.scrollToItem(state.turns.size)
     }
     LazyColumn(
         state = list,
@@ -97,11 +103,6 @@ internal fun ChatScreen(
         contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        item(key = "notice") {
-            Text(stringResource(R.string.chat_notice), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
-        }
         items(state.turns, key = { it.id }) { turn ->
             ChatTurnContent(
                 turn,
@@ -150,24 +151,54 @@ private fun ChatTurnContent(turn: ChatTurn, retryEnabled: Boolean, modifier: Mod
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.semantics { liveRegion = LiveRegionMode.Polite })
                     if (turn.canRetry && retryEnabled) TextButton(onClick = onRetry) { Text(stringResource(R.string.retry)) }
-                    if (!turn.running && turn.answer.isNotBlank() && turn.documents.isNotEmpty()) {
-                        val label = stringResource(R.string.chat_documents, turn.documents.size)
-                        val expanded = stringResource(if (documentsExpanded) R.string.chat_documents_expanded else R.string.chat_documents_collapsed)
-                        TextButton(onClick = { documentsExpanded = !documentsExpanded }, modifier = Modifier.semantics {
-                            contentDescription = label
-                            stateDescription = expanded
-                        }) {
-                            Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(16.dp))
-                            Text(label, style = MaterialTheme.typography.labelSmall)
-                        }
-                        if (documentsExpanded) {
-                            Text(stringResource(R.string.chat_documents_description), style = MaterialTheme.typography.bodySmall)
-                            turn.documents.forEach { document ->
-                                TextButton(onClick = { onOpenDocument(document) }, enabled = !openingDocument) {
-                                    Text(document.name, style = MaterialTheme.typography.bodySmall)
-                                }
-                            }
-                        }
+                }
+            }
+        }
+        if (!turn.running && turn.answer.isNotBlank() && turn.documents.isNotEmpty()) {
+            ChatSourcesBubble(turn.documents, documentsExpanded, openingDocument = openingDocument,
+                onToggle = { documentsExpanded = !documentsExpanded }, onOpenDocument = onOpenDocument)
+        }
+    }
+}
+
+@Composable
+private fun ChatSourcesBubble(
+    documents: List<DocumentReference>,
+    expanded: Boolean,
+    modifier: Modifier = Modifier,
+    openingDocument: Boolean = false,
+    onToggle: () -> Unit = {},
+    onOpenDocument: (DocumentReference) -> Unit = {}
+) {
+    val label = stringResource(R.string.chat_sources_count, documents.size)
+    val expansionState = stringResource(if (expanded) R.string.chat_documents_expanded else R.string.chat_documents_collapsed)
+    Surface(color = MaterialTheme.colorScheme.surfaceContainerLow, shape = MaterialTheme.shapes.large,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = modifier.animateContentSize().then(if (expanded) Modifier.fillMaxWidth(0.9f) else Modifier)) {
+        Column {
+            Row(
+                modifier = (if (expanded) Modifier.fillMaxWidth() else Modifier)
+                    .clickable(role = Role.Button, onClick = onToggle)
+                    .semantics {
+                        contentDescription = label
+                        stateDescription = expansionState
+                    }
+                    .heightIn(min = 48.dp)
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Rounded.Description, contentDescription = null, modifier = Modifier.size(20.dp))
+                Text(stringResource(R.string.chat_sources), style = MaterialTheme.typography.labelLarge)
+                Icon(if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = null, modifier = Modifier.size(20.dp))
+            }
+            if (expanded) Column(Modifier.padding(start = 4.dp, end = 4.dp, bottom = 4.dp)) {
+                documents.forEach { document ->
+                    TextButton(onClick = { onOpenDocument(document) }, enabled = !openingDocument,
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp),
+                        contentPadding = PaddingValues(12.dp)) {
+                        Text(document.name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.fillMaxWidth())
                     }
                 }
             }
@@ -270,11 +301,16 @@ internal fun ChatComposer(
     }
 }
 
+private object ChatPreviewData {
+    val documents = listOf(DocumentReference("preview", "emergency", "suministros-emergencia-es.pdf", emptyList()))
+}
+
 @Preview(device = Devices.PIXEL_7, showBackground = true)
 @Composable
 private fun ChatScreenPreview() {
     TP1Theme {
-        ChatScreen(ChatState(turns = listOf(ChatTurn(1, "Hola", "Hola. ¿En qué puedo ayudarte?", finish = FinishReason.EOG))),
+        ChatScreen(ChatState(turns = listOf(ChatTurn(1, "Hola", "Hola. ¿En qué puedo ayudarte?", finish = FinishReason.EOG,
+            documents = ChatPreviewData.documents))),
             PaddingValues())
     }
 }
@@ -289,4 +325,15 @@ private fun ChatComposerPreview() {
 @Composable
 private fun TypingIndicatorPreview() {
     TP1Theme { TypingIndicator(Modifier.padding(4.dp)) }
+}
+
+@Preview(device = Devices.PIXEL_7, showBackground = true)
+@Composable
+private fun ChatSourcesBubblePreview() {
+    TP1Theme {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            ChatSourcesBubble(ChatPreviewData.documents, expanded = false)
+            ChatSourcesBubble(ChatPreviewData.documents, expanded = true)
+        }
+    }
 }
