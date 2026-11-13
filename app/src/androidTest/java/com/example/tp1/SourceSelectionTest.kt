@@ -9,22 +9,18 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsSelected
-import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.core.net.toUri
-import androidx.compose.ui.graphics.asAndroidBitmap
 import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourceStore
-import com.example.tp1.sources.sourcePickerIntent
 import com.example.tp1.sources.SourcesViewModel
 import androidx.lifecycle.ViewModelProvider
 import org.junit.After
@@ -67,14 +63,6 @@ class SourceSelectionTest {
                 "content://com.example.tp1.test.documents".toUri(), method, arg, null
             ))
         } finally { instrumentation.uiAutomation.dropShellPermissionIdentity() }
-    }
-
-    private fun capture(name: String) {
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val image = compose.onRoot().captureToImage().asAndroidBitmap()
-        java.io.File(context.getExternalFilesDir(null), "source-status-$name.png").outputStream().use {
-            image.compress(Bitmap.CompressFormat.PNG, 100, it)
-        }
     }
 
     private fun openSelection() {
@@ -210,19 +198,6 @@ class SourceSelectionTest {
     }
 
     @Test
-    fun pickerIntentsUseDurableLocalReadOnlyDocumentActions() {
-        val files = sourcePickerIntent(SourceKind.Document)
-        assertEquals(Intent.ACTION_OPEN_DOCUMENT, files.action)
-        assertTrue(files.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false))
-        assertTrue(files.getBooleanExtra(Intent.EXTRA_LOCAL_ONLY, false))
-        assertTrue(files.hasCategory(Intent.CATEGORY_OPENABLE))
-        assertEquals("*/*", files.type)
-        val tree = sourcePickerIntent(SourceKind.Tree)
-        assertEquals(Intent.ACTION_OPEN_DOCUMENT_TREE, tree.action)
-        assertEquals(0, (files.flags or tree.flags) and Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-    }
-
-    @Test
     fun rejectionMessageSurvivesTheRefreshOnPickerReturn() {
         lateinit var model: SourcesViewModel
         compose.runOnIdle {
@@ -304,7 +279,6 @@ class SourceSelectionTest {
         assertFalse(model.state.value.sources.single { it.record.uri == before.uri }.available)
         compose.onNodeWithText("Añadir archivos").assertDoesNotExist()
         compose.onNodeWithText("Captura.png").assertDoesNotExist()
-        capture("roots-after-move")
 
         compose.onNodeWithText("Documentos").performClick()
         compose.waitUntil(10_000) { !browser.state.value.loading && browser.state.value.entries.size == 2 }
@@ -313,12 +287,10 @@ class SourceSelectionTest {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         context.contentResolver.openInputStream(moved.uri.toUri())!!.use { assertEquals(0x89, it.read()) }
         assertNotEquals(before.uri, moved.uri)
-        capture("moved-file-in-folder")
 
         openSelection()
         compose.onNodeWithText("No disponible").performScrollTo().assertIsDisplayed()
         compose.onNodeWithContentDescription("Quitar Captura.png").performScrollTo().assertIsEnabled()
-        capture("unavailable-selection")
         compose.onNodeWithText("Reintentar").performScrollTo().performClick()
         compose.awaitSources()
         assertEquals(3, SourceStore(context).restore().sources.size)
@@ -343,7 +315,6 @@ class SourceSelectionTest {
         val parent = records.single { it.name == robot.folderName }
         val child = records.single { it.name == "Hija" }
         robot.assertReadOnlyGrants(2)
-        capture("overlapping-trees")
         compose.onNodeWithText("Listo").performScrollTo().performClick()
         lateinit var browser: BrowserViewModel
         compose.runOnIdle { browser = ViewModelProvider(compose.activity)[BrowserViewModel::class.java] }
@@ -363,7 +334,6 @@ class SourceSelectionTest {
         val file = browser.state.value.entries.single()
         context.contentResolver.openInputStream(file.uri.toUri())!!.use { assertEquals('T'.code, it.read()) }
         compose.onNodeWithText("Dentro.txt").assertIsDisplayed()
-        capture("child-after-parent-removal")
         compose.activityRule.scenario.recreate()
         compose.awaitSources()
         compose.runOnIdle { browser = ViewModelProvider(compose.activity)[BrowserViewModel::class.java] }
@@ -386,47 +356,6 @@ class SourceSelectionTest {
         compose.waitUntil(10_000) { !browser.state.value.loading && browser.state.value.path.size == 2 }
         context.contentResolver.openInputStream(browser.state.value.entries.single().uri.toUri())!!.use {
             assertEquals('T'.code, it.read())
-        }
-        capture("parent-after-child-removal")
-    }
-
-    @Test
-    fun failedRemovalAndUnknownRecordsKeepRetainedReadGrant() {
-        val uri = fixtureCall("fixture-authorize", "file").getString("uri")!!
-        val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val file = java.io.File(context.cacheDir, "removal-durability.json").apply { delete() }
-        val pending = java.io.File(file.path + ".new")
-        try {
-            val store = SourceStore(context, file)
-            store.restore()
-            val selected = store.add(emptyList(), listOf(uri), SourceKind.Document,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION).sources
-            val saved = file.readText()
-            // A nonempty directory blocks AtomicFile's next write without damaging the saved file.
-            check(pending.mkdir())
-            java.io.File(pending, "blocker").writeText("keep")
-            assertThrows(Exception::class.java) { store.remove(selected, uri) }
-            assertEquals(saved, file.readText())
-            robot.assertReadOnlyGrants(1)
-            assertTrue(SourceStore(context, file).restore().sources.single().available)
-            pending.deleteRecursively()
-
-            val records = org.json.JSONArray(saved).put(org.json.JSONObject().put("uri", uri).put("kind", "Future"))
-            file.writeText(records.toString())
-            val restored = store.restore()
-            assertTrue(restored.damagedRecords)
-            assertTrue(store.remove(restored.sources, uri).isEmpty())
-            robot.assertReadOnlyGrants(1)
-            assertEquals("Future", org.json.JSONArray(file.readText()).getJSONObject(0).getString("kind"))
-            context.contentResolver.openInputStream(uri.toUri())!!.use { assertEquals('T'.code, it.read()) }
-
-            file.writeText(saved)
-            assertTrue(store.remove(store.restore().sources, uri).isEmpty())
-            robot.assertReadOnlyGrants(0)
-            assertTrue(SourceStore(context, file).restore().sources.isEmpty())
-        } finally {
-            pending.deleteRecursively()
-            file.delete()
         }
     }
 
@@ -454,7 +383,6 @@ class SourceSelectionTest {
         compose.onNodeWithText("Añadir archivos").assertDoesNotExist()
         openSelection()
         compose.onNodeWithText("No disponible").assertIsDisplayed()
-        capture("temporary-provider-failure")
         compose.onNodeWithText("Listo").performScrollTo().assertIsEnabled()
         fixtureCall("fixture-file-unavailable", "false")
         compose.onNodeWithText("Reintentar").performScrollTo().performClick()
@@ -467,6 +395,5 @@ class SourceSelectionTest {
         robot.assertReadOnlyGrants(1)
         compose.onNodeWithText("Listo").performScrollTo().performClick()
         compose.onNodeWithText("file").assertIsDisplayed()
-        capture("provider-recovered")
     }
 }

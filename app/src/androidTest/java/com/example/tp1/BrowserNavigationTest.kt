@@ -139,7 +139,7 @@ class BrowserNavigationTest {
         error("Google Photos did not render the fixture's blue circle: ${robot.visibleText()}")
     }
 
-    private fun captureLargeText(longName: String) {
+    private fun assertLargeText(longName: String) {
         val size = shell("wm size")
         val density = shell("wm density")
         val font = shell("settings get system font_scale").trim()
@@ -150,9 +150,7 @@ class BrowserNavigationTest {
             SystemClock.sleep(1500)
             awaitBrowser(3)
             compose.onNodeWithText("Añadir").assertIsDisplayed()
-            capture("nested-large-text-320dp-top")
             safeRow(longName).assertIsDisplayed()
-            capture("nested-large-text-320dp-files")
         } finally {
             shell("settings put system font_scale $font")
             shell(if (size.contains("Override")) "wm size ${size.trim().substringAfterLast(":").trim()}" else "wm size reset")
@@ -181,28 +179,23 @@ class BrowserNavigationTest {
         compose.awaitSources()
         compose.onNodeWithText("Listo").performScrollTo().performClick()
         compose.waitUntil(10_000) { browser.state.value.entries.size == 2 }
-        capture("authorized-roots")
 
         compose.onNodeWithText("Independiente.png").performClick()
         awaitPhoto()
-        capture("viewer-independent-image")
         instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         robot.awaitPackage { it == context.packageName }
         awaitBrowser(0)
 
         enter(robot.folderName, 1)
         assertEquals(setOf("Nivel1", "Independiente.png"), browser.state.value.entries.map { it.metadata.name }.toSet())
-        capture("tree-root")
         enter("Nivel1", 2)
         enter("Nivel2", 3)
         val position = browser.state.value.path
         assertEquals(setOf("Prueba.png", longName, "Permiso.txt", "Sin_visor.tp1noviewer", "Vacia"), browser.state.value.entries.map { it.metadata.name }.toSet())
-        capture("nested-level-two")
-        captureLargeText(longName)
+        assertLargeText(longName)
         enter("Vacia", 4)
         compose.onNodeWithText("Carpeta vacía").assertIsDisplayed()
         compose.onNodeWithText("Pulsa Añadir para elegir archivos o carpetas.").assertDoesNotExist()
-        capture("empty-folder")
         back(3)
 
         compose.onNode(hasText("Chat") and hasClickAction()).performClick().assertIsSelected()
@@ -228,7 +221,6 @@ class BrowserNavigationTest {
         robot.awaitPackage { it == "com.example.tp1.test" }
         assertTrue(robot.visibleText(), robot.visibleText().contains("TP1 viewer proof: read OK; write denied; root denied; sibling denied; MIME OK; ClipData OK"))
         android.util.Log.i("TP1-M3", robot.visibleText())
-        capture("viewer-read-only-grant-proof")
         instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         robot.awaitPackage { it == context.packageName }
         awaitBrowser(3)
@@ -241,12 +233,10 @@ class BrowserNavigationTest {
 
         tapRow("Prueba.png")
         awaitPhoto()
-        capture("viewer-nested-image")
         instrumentation.sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
         robot.awaitPackage { it == context.packageName }
         awaitBrowser(3)
         assertEquals(position, browser.state.value.path)
-        capture("browser-after-viewer-return")
 
         val unknown = browser.state.value.entries.single { it.metadata.name == "Sin_visor.tp1noviewer" }
         val treeSource = sources.state.value.sources.single { it.record.kind == SourceKind.Tree }
@@ -256,7 +246,6 @@ class BrowserNavigationTest {
         tapRow("Permiso.txt")
         compose.waitUntil(10_000) { !browser.state.value.opening && browser.state.value.message != null }
         assertEquals("Deleted file", BrowserProblem.Missing, browser.state.value.message)
-        capture("missing-file")
         compose.onNodeWithText("Reintentar").performClick()
         awaitBrowser(3)
         assertFalse(browser.state.value.entries.any { it.metadata.name == "Permiso.txt" })
@@ -269,7 +258,6 @@ class BrowserNavigationTest {
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         compose.waitUntil(15_000) { browser.state.value.problem == BrowserProblem.Missing }
-        capture("missing-current-folder")
         back(2)
 
         val tree = sources.state.value.sources.single { it.record.kind == SourceKind.Tree }
@@ -278,7 +266,6 @@ class BrowserNavigationTest {
         compose.waitUntil(15_000) { browser.state.value.atRoots && browser.state.value.entries.size == 1 }
         compose.onNodeWithText("Añadir archivos").assertDoesNotExist()
         compose.onNodeWithText("Independiente.png").assertIsDisplayed()
-        capture("revoked-access-keeps-healthy-source")
 
         compose.onNodeWithText("Añadir").performClick()
         compose.onNodeWithText("Elegir carpeta").performClick()
@@ -298,7 +285,6 @@ class BrowserNavigationTest {
             assertEquals('P'.code, input.read())
         }
         robot.assertReadOnlyGrants(1)
-        capture("current-root-removal")
     }
 
     @Test fun providerFailuresNullableMetadataAndStaleLoadsStayInScope() {
@@ -332,13 +318,11 @@ class BrowserNavigationTest {
             assertEquals(BrowserProblem.Provider, browser.state.value.problem)
             compose.onNodeWithText("Carpeta vacía").assertDoesNotExist()
             compose.onNodeWithText("Reintentar").performScrollTo().assertIsDisplayed()
-            if (name == "error") capture("provider-error")
             back(1)
         }
         enter("pending", 2)
         assertTrue(browser.state.value.pending)
         compose.onNodeWithText("Cargando carpeta…").assertIsDisplayed()
-        capture("provider-loading")
         back(1)
         enter("gone", 2)
         assertEquals(BrowserProblem.Missing, browser.state.value.problem)
@@ -358,7 +342,6 @@ class BrowserNavigationTest {
         compose.waitUntil(10_000) { !browser.state.value.opening && browser.state.value.message != null }
         assertEquals(browser.state.value.toString(), BrowserProblem.NoViewer, browser.state.value.message)
         compose.onNodeWithText(context.getString(R.string.browser_no_viewer)).assertIsDisplayed()
-        capture("missing-viewer")
         compose.runOnIdle { browser.reload() }
         awaitBrowser(1)
         val lastRow = safeRow("sibling")

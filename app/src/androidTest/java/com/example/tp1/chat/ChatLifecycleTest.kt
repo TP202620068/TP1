@@ -9,6 +9,7 @@ import com.example.tp1.inference.ChatMessage
 import com.example.tp1.inference.ChatRole
 import com.example.tp1.inference.GenerationEvent
 import com.example.tp1.inference.FinishReason
+import com.example.tp1.inference.budgetChatMessages
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -67,6 +68,99 @@ class ChatLifecycleTest {
         chat.setForeground(true)
         chat.setSelected(true)
         scheduler.runCurrent()
+    }
+
+    @Test fun draftLengthBoundaryIsAcceptedForEditsAndRestoration() = runTest(dispatcher) {
+        val boundary = "😀".repeat(32_768)
+        val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
+        val savedState = SavedStateHandle()
+        chat = ChatViewModel(application, savedState, {}, { connection() },
+            retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
+        store.put("chat", chat)
+        chat.editDraft(boundary)
+        assertEquals(boundary, chat.state.value.draft)
+        assertEquals(boundary, savedState.get<String>("chatDraft"))
+        assertNull(chat.state.value.problem)
+        chat.editDraft(boundary + "x")
+        assertEquals(boundary, chat.state.value.draft)
+        assertEquals(boundary, savedState.get<String>("chatDraft"))
+        assertEquals(ChatProblem.InvalidInput, chat.state.value.problem)
+        chat.editDraft(boundary)
+        assertEquals(ChatProblem.InvalidInput, chat.state.value.problem)
+        val restored = ChatViewModel(application, savedState, {}, { connection() },
+            retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
+        store.put("restored", restored)
+        assertEquals(boundary, restored.state.value.draft)
+        assertNull(restored.state.value.problem)
+    }
+
+    @Test fun briefBackgroundRetainsModelAndFinalOwnerClearReleasesIt() = runTest(dispatcher) {
+        start { ChatConnection(prepare = { text, history -> budgetChatMessages(CHAT_SYSTEM_PROMPT, history, text) { 100 } },
+            stream = { flow {
+                emit(GenerationEvent.Text("Respuesta guardada"))
+                emit(GenerationEvent.Finished(FinishReason.EOG, 2))
+            } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }) }
+        chat.editDraft("Hola")
+        chat.send()
+        runCurrent()
+        assertEquals(ChatPhase.Idle, chat.state.value.phase)
+        assertEquals("Respuesta guardada", chat.state.value.turns.single().answer)
+        chat.setForeground(false)
+        runCurrent()
+        assertEquals(ChatPreparation.Ready, chat.state.value.preparation)
+        assertEquals(0, closed)
+        chat.setForeground(true)
+        runCurrent()
+        assertEquals(ChatPreparation.Ready, chat.state.value.preparation)
+        store.clear()
+        runCurrent()
+        assertEquals(1, closed)
+        assertEquals("Respuesta guardada", chat.state.value.turns.single().answer)
+    }
+
+    @Test fun backgroundDuringCompletedStreamCleanupPreservesAnswerForReplay() = runTest(dispatcher) {
+        val cleanup = CompletableDeferred<Unit>()
+        try {
+            start { ChatConnection(prepare = { text, history -> budgetChatMessages(CHAT_SYSTEM_PROMPT, history, text) { 100 } },
+                stream = { flow {
+                    try {
+                        emit(GenerationEvent.Text("Respuesta completa"))
+                        emit(GenerationEvent.Finished(FinishReason.EOG, 2))
+                        awaitCancellation()
+                    } finally { withContext(NonCancellable) { cleanup.await() } }
+                } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }) }
+            chat.editDraft("Hola")
+            chat.send()
+            runCurrent()
+            assertEquals(FinishReason.EOG, chat.state.value.turns.single().finish)
+            assertEquals(ChatPhase.Generating, chat.state.value.phase)
+            chat.setForeground(false)
+            runCurrent()
+            assertEquals(ChatPhase.Stopping, chat.state.value.phase)
+            cleanup.complete(Unit)
+            runCurrent()
+            assertEquals(ChatPhase.Idle, chat.state.value.phase)
+            assertEquals(FinishReason.EOG, chat.state.value.turns.single().finish)
+            assertEquals(listOf("Hola", "Respuesta completa"), chat.state.value.turns.replayMessages().map { it.text })
+        } finally { cleanup.complete(Unit) }
+    }
+
+    @Test fun clearingOwnerDuringLoadClosesLateAcquisitionIndependentlyOfScope() = runTest(dispatcher) {
+        val gate = CompletableDeferred<Unit>()
+        val entered = CompletableDeferred<Unit>()
+        try {
+            start {
+                withContext(NonCancellable) { entered.complete(Unit); gate.await() }
+                connection()
+            }
+            assertTrue(entered.isCompleted)
+            store.clear()
+            runCurrent()
+            gate.complete(Unit)
+            runCurrent()
+            assertEquals(1, closed)
+            assertNotEquals(ChatPreparation.Ready, chat.state.value.preparation)
+        } finally { gate.complete(Unit) }
     }
 
     @Test fun briefReturnCancelsUnloadAndNextBackgroundGetsFullTwoMinutes() = runTest(dispatcher) {

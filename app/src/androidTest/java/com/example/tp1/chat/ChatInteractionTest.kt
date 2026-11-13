@@ -119,32 +119,6 @@ class ChatInteractionTest {
         compose.runOnIdle { assertEquals("Corregido 😀", savedState.get<String>("chatDraft")) }
     }
 
-    @Test fun draftLengthBoundaryIsAcceptedForEditsAndRestoration() {
-        val boundary = "😀".repeat(32_768)
-        InstrumentationRegistry.getInstrumentation().runOnMainSync {
-            val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
-            val savedState = SavedStateHandle()
-            chat = ChatViewModel(application, savedState, {}, { connection() },
-                retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
-            store.put("chat", chat)
-            chat.editDraft(boundary)
-            assertEquals(boundary, chat.state.value.draft)
-            assertEquals(boundary, savedState.get<String>("chatDraft"))
-            assertNull(chat.state.value.problem)
-            chat.editDraft(boundary + "x")
-            assertEquals(boundary, chat.state.value.draft)
-            assertEquals(boundary, savedState.get<String>("chatDraft"))
-            assertEquals(ChatProblem.InvalidInput, chat.state.value.problem)
-            chat.editDraft(boundary)
-            assertEquals(ChatProblem.InvalidInput, chat.state.value.problem)
-            val restored = ChatViewModel(application, savedState, {}, { connection() },
-                retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
-            store.put("restored", restored)
-            assertEquals(boundary, restored.state.value.draft)
-            assertNull(restored.state.value.problem)
-        }
-    }
-
     @Test fun oversizedRestoredDraftIsClearedWithVisibleFeedback() {
         val savedState = SavedStateHandle(mapOf("chatDraft" to "x".repeat(1024 * 1024)))
         show(savedState = savedState)
@@ -359,22 +333,6 @@ class ChatInteractionTest {
         } finally { gate.complete(Unit) }
     }
 
-    @Test fun briefBackgroundRetainsModelAndFinalOwnerClearReleasesIt() {
-        streams += complete("Respuesta guardada")
-        show()
-        awaitReady()
-        send("Hola")
-        compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle && chat.state.value.turns.isNotEmpty() }
-        compose.runOnIdle { chat.setForeground(false) }
-        compose.runOnIdle {
-            assertEquals(ChatPreparation.Ready, chat.state.value.preparation)
-            assertEquals(0, closed)
-            chat.setForeground(true)
-        }
-        awaitReady()
-        compose.runOnIdle { store.clear(); assertEquals(1, closed); assertEquals("Respuesta guardada", chat.state.value.turns.single().answer) }
-    }
-
     @Test fun backgroundDuringGenerationSuppressesLateOutputAndWaitsForCleanup() {
         val cleanup = CompletableDeferred<Unit>()
         var opened = 0
@@ -410,50 +368,6 @@ class ChatInteractionTest {
                 assertEquals(1, opened)
             }
         } finally { cleanup.complete(Unit) }
-    }
-
-    @Test fun backgroundDuringCompletedStreamCleanupPreservesAnswerForReplay() {
-        val cleanup = CompletableDeferred<Unit>()
-        streams += flow {
-            try {
-                emit(GenerationEvent.Text("Respuesta completa"))
-                emit(GenerationEvent.Finished(FinishReason.EOG, 2))
-                awaitCancellation()
-            } finally { withContext(NonCancellable) { cleanup.await() } }
-        }
-        try {
-            show()
-            awaitReady()
-            send("Hola")
-            compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.finish == FinishReason.EOG }
-            compose.runOnIdle {
-                assertEquals(ChatPhase.Generating, chat.state.value.phase)
-                chat.setForeground(false)
-            }
-            compose.runOnIdle { assertEquals(ChatPhase.Stopping, chat.state.value.phase) }
-            cleanup.complete(Unit)
-            compose.waitUntil(5_000) { chat.state.value.phase == ChatPhase.Idle }
-            compose.runOnIdle {
-                assertEquals(FinishReason.EOG, chat.state.value.turns.single().finish)
-                assertEquals(listOf("Hola", "Respuesta completa"), chat.state.value.turns.replayMessages().map { it.text })
-            }
-        } finally { cleanup.complete(Unit) }
-    }
-
-    @Test fun clearingOwnerDuringLoadClosesLateAcquisitionIndependentlyOfScope() {
-        val gate = CompletableDeferred<Unit>()
-        val entered = CompletableDeferred<Unit>()
-        try {
-            show(open = {
-                withContext(NonCancellable) { entered.complete(Unit); gate.await() }
-                connection()
-            })
-            compose.waitUntil(5_000) { entered.isCompleted }
-            compose.runOnIdle { store.clear() }
-            gate.complete(Unit)
-            compose.waitUntil(5_000) { closed == 1 }
-            compose.runOnIdle { assertNotEquals(ChatPreparation.Ready, chat.state.value.preparation) }
-        } finally { gate.complete(Unit) }
     }
 
     @Test fun streamingDoesNotPullReaderAwayFromEarlierMessages() {

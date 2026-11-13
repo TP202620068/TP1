@@ -24,6 +24,7 @@ import com.example.tp1.extraction.ExtractionFailure
 import com.example.tp1.extraction.MarkdownChunk
 import com.example.tp1.extraction.NativeConversion
 import com.example.tp1.extraction.hex
+import com.example.tp1.extraction.reportChunkTokens
 import com.example.tp1.chat.CHAT_SYSTEM_PROMPT
 import com.example.tp1.chat.ChatConnection
 import com.example.tp1.chat.ChatPreparation
@@ -581,14 +582,19 @@ class DocumentIndexTest {
             assertEquals(ChatPreparation.Unprepared, chat.state.value.preparation)
             assertEquals("Retained draft", chat.state.value.draft)
             val markdown = checkNotNull(extracted).markdown
+            assertTrue(markdown.contains("warranty"))
             assertTrue(ExtractionWork.operations(context).listFiles().orEmpty().isEmpty())
             val session = EmbeddingSession.open(models)
             try {
                 val expected = session.chunkDocument(markdown)
                 assertEquals(expected.map { it.text }, saved.chunks.map { it.text })
                 assertEquals(expected.map { it.inputTokens }, saved.chunks.map { it.inputTokens })
+                reportChunkTokens("anydoc-rtf", markdown, expected, session)
                 for (chunk in saved.chunks) {
                     assertEquals(chunk.inputTokens, session.countDocumentTokens(chunk.text))
+                    assertTrue(chunk.inputTokens <= session.maxInputTokens)
+                    assertEquals(512, chunk.vector.size)
+                    assertEquals(1.0, chunk.vector.sumOf { it.toDouble() * it }, 1e-5)
                     assertArrayEquals(session.embedDocument(chunk.text), chunk.vector, 0f)
                 }
             } finally { session.close() }
