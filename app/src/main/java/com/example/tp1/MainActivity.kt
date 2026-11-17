@@ -14,6 +14,7 @@ import androidx.activity.viewModels
 import androidx.lifecycle.lifecycleScope
 import com.example.tp1.browser.BrowserViewModel
 import com.example.tp1.chat.ChatViewModel
+import com.example.tp1.inference.ModelAcquisition
 import com.example.tp1.search.SearchViewModel
 import com.example.tp1.sources.SourceKind
 import com.example.tp1.sources.SourcesViewModel
@@ -36,6 +37,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        ModelAcquisition.get(application).start()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)

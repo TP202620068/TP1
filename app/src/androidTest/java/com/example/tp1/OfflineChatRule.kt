@@ -20,7 +20,7 @@ class OfflineChatRule internal constructor(
     private val indexing = OfflineIndexingRule()
     private val callback = ActivityLifecycleCallback { activity, stage ->
         if (activity is MainActivity && stage == Stage.CREATED) {
-            // Install before onStart so navigation tests never download model weights.
+            // Acquisition is replaced before launch; install the fake native owner before onStart.
             ViewModelProvider(activity, viewModelFactory {
                 initializer {
                     ChatViewModel(activity.application, createSavedStateHandle(),

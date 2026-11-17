@@ -17,6 +17,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.browser.DocumentBrowser
+import com.example.tp1.OfflineModelAcquisitionRule
 import com.example.tp1.extraction.DocumentExtractor
 import com.example.tp1.extraction.ExtractionWork
 import com.example.tp1.extraction.ExtractedDocument
@@ -57,9 +58,11 @@ import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 
 class DocumentIndexTest {
+    @get:Rule val offlineAcquisition = OfflineModelAcquisitionRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val resolver = context.contentResolver
@@ -114,7 +117,7 @@ class DocumentIndexTest {
 
     // Deliberate orchestration stand-in, not a tokenizer or real-model numerical claim.
     private fun indexer(beforeEmbed: suspend () -> Unit = {}, close: suspend () -> Unit = {}, limit: Int = 1024) =
-        DocumentIndexer(context, maxInputTokens = limit, extract = { selected, document ->
+        DocumentIndexer(context, acquireModel = {}, maxInputTokens = limit, extract = { selected, document ->
             extractions++
             configure(markdown.toByteArray(Charsets.UTF_8))
             extractor.extract(selected, document)
@@ -195,7 +198,7 @@ class DocumentIndexTest {
 
     @Test fun successfulEmptyReplacesOldChunksButExtractionFailureDoesNot() = runBlocking<Unit> {
         val first = complete(indexer().index(source, entry))
-        val failed = DocumentIndexer(context, extract = { _, _ -> throw ExtractionFailure("needsOcr", "Synthetic failure") })
+        val failed = DocumentIndexer(context, acquireModel = {}, extract = { _, _ -> throw ExtractionFailure("needsOcr", "Synthetic failure") })
         try { failed.index(source, entry, refresh = true); fail("Extraction failure ignored") }
         catch (error: ExtractionFailure) { assertEquals("needsOcr", error.code) }
         assertEquals(first.generation, read()!!.generation)
@@ -295,7 +298,7 @@ class DocumentIndexTest {
     }
 
     @Test fun invalidMetadataAndSelectionFailBeforeModelOpen() = runBlocking<Unit> {
-        val invalid = DocumentIndexer(context, extract = { _, _ -> ExtractedDocument(markdown, "fixture", "invalid-hash") },
+        val invalid = DocumentIndexer(context, acquireModel = {}, extract = { _, _ -> ExtractedDocument(markdown, "fixture", "invalid-hash") },
             openEmbeddings = { opens++; error("Invalid metadata reached model loading") })
         try { invalid.index(source, entry); fail("Invalid metadata accepted") } catch (_: IllegalArgumentException) { }
         assertEquals(0, opens)

@@ -16,6 +16,7 @@ import com.example.tp1.inference.FinishReason
 import com.example.tp1.inference.GenerationEvent
 import com.example.tp1.inference.InferenceSession
 import com.example.tp1.inference.Model
+import com.example.tp1.inference.ModelAcquisition
 import com.example.tp1.inference.ModelManager
 import com.example.tp1.inference.NativeWorkHandoff
 import com.example.tp1.indexing.DocumentRetriever
@@ -41,7 +42,7 @@ import kotlin.time.Duration.Companion.milliseconds
 
 // Saved state stores UTF-16; keep its size bounded independently of the UTF-8 request budget.
 private const val MAX_DRAFT_LENGTH = 64 * 1024
-private const val BACKGROUND_TIMEOUT_MILLIS = 120_000L
+private const val BACKGROUND_TIMEOUT_MILLIS = 300_000L
 
 /** Concrete function seam for deterministic owner/UI checks without loading weights. */
 internal class ChatConnection(
@@ -62,7 +63,7 @@ internal class ChatViewModel(
     private val checkContext: suspend (List<RetrievalMatch>) -> Unit = { DocumentRetriever(application).checkContext(it) }
 ) : AndroidViewModel(application) {
     constructor(application: Application, savedState: SavedStateHandle) : this(application, savedState,
-        downloadModel = { ModelManager(application).download(Model.Test) },
+        downloadModel = { ModelAcquisition.get(application).acquire(Model.Test) },
         openModel = {
             val session = InferenceSession.open(ModelManager(application), Model.Test, CHAT_SYSTEM_PROMPT)
             ChatConnection(session::prepare, session::stream, session::cancel, session::closeAsync, session::countPassageTokens)

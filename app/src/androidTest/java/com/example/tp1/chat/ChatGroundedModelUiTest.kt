@@ -17,6 +17,7 @@ import androidx.test.runner.lifecycle.ActivityLifecycleCallback
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry
 import androidx.test.runner.lifecycle.Stage
 import com.example.tp1.MainActivity
+import com.example.tp1.OfflineModelAcquisitionRule
 import com.example.tp1.PickerRobot
 import com.example.tp1.awaitSources
 import com.example.tp1.browser.BrowserFolder
@@ -77,7 +78,8 @@ class ChatGroundedModelUiTest {
             })[ChatViewModel::class.java]
         }
     }
-    @get:Rule(order = 0) val productionOwner = object : ExternalResource() {
+    @get:Rule(order = 0) val offlineAcquisition = OfflineModelAcquisitionRule()
+    @get:Rule(order = 1) val productionOwner = object : ExternalResource() {
         override fun before() {
             runBlocking {
                 val models = ModelManager(context)
@@ -93,7 +95,7 @@ class ChatGroundedModelUiTest {
             runBlocking { IndexingCoordinator.replaceForTests(null)?.close() }
         }
     }
-    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 2) val compose = createAndroidComposeRule<MainActivity>()
 
     @After fun cleanup() = picker.cleanUp()
 

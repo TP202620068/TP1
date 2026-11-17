@@ -5,6 +5,7 @@ import com.example.tp1.browser.DirectoryListing
 import com.example.tp1.browser.DocumentBrowser
 import com.example.tp1.indexing.IndexResult
 import com.example.tp1.indexing.IndexingCoordinator
+import com.example.tp1.inference.Model
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -12,8 +13,11 @@ import kotlinx.coroutines.runBlocking
 import org.junit.rules.ExternalResource
 
 /** Install before Activity startup, including its initial saved-source recovery. */
-class OfflineIndexingRule : ExternalResource() {
+class OfflineIndexingRule internal constructor(download: suspend (Model) -> Unit = {}) : ExternalResource() {
+    private val acquisition = OfflineModelAcquisitionRule(download)
+
     internal fun install() = runBlocking {
+        acquisition.install()
         IndexingCoordinator.replaceForTests(null)?.close()
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val browser = DocumentBrowser(context.contentResolver)
@@ -25,7 +29,11 @@ class OfflineIndexingRule : ExternalResource() {
         Unit
     }
 
-    internal fun uninstall() = runBlocking { IndexingCoordinator.replaceForTests(null)?.close(); Unit }
+    internal fun uninstall() = runBlocking {
+        try { IndexingCoordinator.replaceForTests(null)?.close() }
+        finally { acquisition.uninstall() }
+        Unit
+    }
     override fun before() = install()
     override fun after() = uninstall()
 }

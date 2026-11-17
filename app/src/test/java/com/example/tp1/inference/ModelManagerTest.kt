@@ -15,7 +15,9 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
@@ -42,14 +44,37 @@ class ModelManagerTest {
         models.download(Model.Test)
         assertTrue(models.isAvailable(Model.Test))
         assertArrayEquals(bytes, models.location(Model.Test).readBytes())
-        assertEquals(15_000, connection.connectTimeout)
-        assertEquals(15_000, connection.readTimeout)
+        assertEquals(60_000, connection.connectTimeout)
+        assertEquals(120_000, connection.readTimeout)
         assertEquals("identity", connection.getRequestProperty("Accept-Encoding"))
         assertTrue(connection.disconnected)
         val offline = manager(directory) { error("Cached acquisition must not connect") }
         offline.download(Model.Test)
         assertTrue(offline.isAvailable(Model.Test))
         assertEquals(setOf(artifact.name, ".publish.lock"), directory.list()!!.toSet())
+    }
+
+    @Test fun startupAcquiresDistinctModelsAndFreshOwnerReusesBothOffline() = runBlocking<Unit> {
+        val directory = temporary.newFolder()
+        val connections = AtomicInteger()
+        fun models(connect: () -> HttpURLConnection) = ModelManager(directory,
+            { model -> model.profile.copy(artifact = artifact.copy(name = "${model.name}.gguf")) },
+            { connect() })
+        val online = models { connections.incrementAndGet(); Connection(ByteArrayInputStream(bytes)) }
+        val first = ModelAcquisition(CoroutineScope(SupervisorJob() + Dispatchers.IO), online::download)
+        try {
+            first.start()
+            withTimeout(5_000) { Model.entries.forEach { first.acquire(it) } }
+            assertEquals(2, connections.get())
+            Model.entries.forEach { assertArrayEquals(bytes, online.location(it).readBytes()) }
+        } finally { first.close() }
+        val offline = models { error("Cached startup must not connect") }
+        val next = ModelAcquisition(CoroutineScope(SupervisorJob() + Dispatchers.IO), offline::download)
+        try {
+            next.start()
+            withTimeout(5_000) { Model.entries.forEach { next.acquire(it) } }
+            Model.entries.forEach { assertTrue(offline.isAvailable(it)) }
+        } finally { next.close() }
     }
 
     @Test fun actualSizeAndHashAreRequiredRegardlessOfHeaders() = runBlocking<Unit> {

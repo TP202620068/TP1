@@ -11,6 +11,7 @@ import com.example.tp1.extraction.MarkdownChunk
 import com.example.tp1.inference.EmbeddingSession
 import com.example.tp1.inference.DOCUMENT_EMBEDDING_DEADLINE_MILLIS
 import com.example.tp1.inference.Model
+import com.example.tp1.inference.ModelAcquisition
 import com.example.tp1.inference.ModelManager
 import com.example.tp1.inference.NativeWorkHandoff
 import com.example.tp1.sources.SelectedSource
@@ -44,7 +45,8 @@ internal class DocumentIndexer(
         val session = EmbeddingSession.open(models, limit)
         IndexEmbeddings(session::chunkDocument, session::embedDocument, session::close)
     },
-    private val checkAdmission: () -> Unit = {}
+    private val checkAdmission: () -> Unit = {},
+    private val acquireModel: suspend () -> Unit = { ModelAcquisition.get(context).acquire(Model.JinaV5NanoRetrieval) }
 ) {
     private val context = context.applicationContext
 
@@ -69,22 +71,29 @@ internal class DocumentIndexer(
                         store.request(source, entry)
                     }
                     diagnostics.request = ticket.request
+                    diagnostics.start("cache_lookup")
+                    val modelHash = models.profile(Model.JinaV5NanoRetrieval).artifact.sha256
+                    val cached = synchronized(ExtractionWork.sourceLock) {
+                        coroutine.ensureActive()
+                        store.active(ticket)?.takeIf {
+                            !refresh && it.identity.modelSha256 == modelHash && it.identity.maxInputTokens == maxInputTokens
+                        }?.also { store.verify(ticket) }
+                    }
+                    if (cached != null) return@use IndexResult.Complete(
+                        cached.documentId, cached.generation, cached.count, unchanged = true)
+                    diagnostics.start("model_acquisition")
+                    try { acquireModel() }
+                    catch (error: CancellationException) { throw error }
+                    catch (error: Exception) { throw IndexModelFailure(error) }
+                    coroutine.ensureActive()
+                    checkAdmission()
+                    store.checkCurrent(ticket)
                     diagnostics.start("waiting_for_native")
                     NativeWorkHandoff.documents.withLock {
                         val handoff = Any()
                         var embeddings: IndexEmbeddings? = null
                         var candidate: IndexStore.Candidate? = null
                         try {
-                            diagnostics.start("cache_lookup")
-                            val modelHash = models.profile(Model.JinaV5NanoRetrieval).artifact.sha256
-                            val cached = synchronized(ExtractionWork.sourceLock) {
-                                coroutine.ensureActive()
-                                store.active(ticket)?.takeIf {
-                                    !refresh && it.identity.modelSha256 == modelHash && it.identity.maxInputTokens == maxInputTokens
-                                }?.also { store.verify(ticket) }
-                            }
-                            if (cached != null) return@withLock IndexResult.Complete(
-                                cached.documentId, cached.generation, cached.count, unchanged = true)
                             diagnostics.start("handoff")
                             if (!NativeWorkHandoff.acquire(handoff)) return@withLock IndexResult.Busy
                             store.checkCurrent(ticket)

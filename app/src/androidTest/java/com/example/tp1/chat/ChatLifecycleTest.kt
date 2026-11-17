@@ -163,14 +163,14 @@ class ChatLifecycleTest {
         } finally { gate.complete(Unit) }
     }
 
-    @Test fun briefReturnCancelsUnloadAndNextBackgroundGetsFullTwoMinutes() = runTest(dispatcher) {
+    @Test fun briefReturnCancelsUnloadAndNextBackgroundGetsFullFiveMinutes() = runTest(dispatcher) {
         start()
         chat.setForeground(false)
         runCurrent()
         advanceTimeBy(119_999)
         chat.setForeground(true)
         runCurrent()
-        advanceTimeBy(120_001)
+        advanceTimeBy(300_001)
         runCurrent()
         assertEquals(0, closed)
         assertEquals(1, opened)
@@ -178,7 +178,7 @@ class ChatLifecycleTest {
 
         chat.setForeground(false)
         runCurrent()
-        advanceTimeBy(119_999)
+        advanceTimeBy(299_999)
         runCurrent()
         assertEquals(0, closed)
         advanceTimeBy(1)
@@ -195,7 +195,7 @@ class ChatLifecycleTest {
         start()
         chat.setForeground(false)
         runCurrent()
-        sleptMillis = 120_001
+        sleptMillis = 300_001
         chat.setForeground(true)
         runCurrent()
         assertEquals(1, closed)
@@ -208,7 +208,7 @@ class ChatLifecycleTest {
         start { connection(closing) }
         chat.setForeground(false)
         runCurrent()
-        advanceTimeBy(120_000)
+        advanceTimeBy(300_000)
         runCurrent()
         assertEquals(ChatPreparation.Closing, chat.state.value.preparation)
         chat.setForeground(true)
@@ -345,7 +345,7 @@ class ChatLifecycleTest {
         start { connection(closing) }
         chat.setForeground(false)
         runCurrent()
-        advanceTimeBy(120_000)
+        advanceTimeBy(300_000)
         runCurrent()
         closing.completeExceptionally(IOException("Synthetic close failure"))
         runCurrent()
@@ -414,7 +414,7 @@ class ChatLifecycleTest {
         val ticket = Any()
         val pending = withContext(Dispatchers.Main.immediate) {
             chat.setForeground(false)
-            sleptMillis = 120_001
+            sleptMillis = 300_001
             chat.setForeground(true)
             // Enter before the newly scheduled release coroutine gets its first dispatch.
             this@runTest.async(Dispatchers.Main.immediate, start = CoroutineStart.UNDISPATCHED) {

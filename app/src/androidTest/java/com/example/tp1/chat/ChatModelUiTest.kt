@@ -124,9 +124,9 @@ class ChatModelUiTest {
         }
         compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         assertEquals(ChatPreparation.Ready, owner.state.value.preparation)
-        compose.waitUntil(150_000) { owner.state.value.preparation == ChatPreparation.Unprepared }
+        compose.waitUntil(350_000) { owner.state.value.preparation == ChatPreparation.Unprepared }
         val released = ExtractionWork.permit.tryLock()
         if (released) ExtractionWork.permit.unlock()
-        assertTrue("Two minutes in background must release the model's native memory permit", released)
+        assertTrue("Five minutes in background must release the model's native memory permit", released)
     }
 }

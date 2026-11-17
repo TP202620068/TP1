@@ -15,6 +15,7 @@ import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.browser.DocumentBrowser
+import com.example.tp1.OfflineModelAcquisitionRule
 import com.example.tp1.chat.ChatConnection
 import com.example.tp1.chat.ChatPhase
 import com.example.tp1.chat.ChatPreparation
@@ -56,9 +57,11 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
 
 /** Real SQLite/provider tests. Fake vectors below make no real-model numerical claim. */
 class DocumentRetrievalTest {
+    @get:Rule val offlineAcquisition = OfflineModelAcquisitionRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val application = instrumentation.targetContext.applicationContext as Application
     private val directory = File(application.noBackupFilesDir, "retrieval-test-${UUID.randomUUID()}")
@@ -127,8 +130,9 @@ class DocumentRetrievalTest {
         candidate
     }
 
-    private fun retriever(beforeEmbed: suspend () -> Unit = {}, close: suspend () -> Unit = {}, value: FloatArray = vector()) =
-        DocumentRetriever(context, openEmbeddings = {
+    private fun retriever(beforeEmbed: suspend () -> Unit = {}, close: suspend () -> Unit = {}, value: FloatArray = vector(),
+                          acquire: suspend () -> Unit = {}) =
+        DocumentRetriever(context, acquireModel = acquire, openEmbeddings = {
             assertNotEquals(Looper.getMainLooper(), Looper.myLooper())
             assertFalse(Thread.holdsLock(ExtractionWork.sourceLock))
             opens++
@@ -212,8 +216,36 @@ class DocumentRetrievalTest {
     }
 
     @Test fun missingLocalWeightsFailEvenWhenThereAreNoIndexedDocuments() = runBlocking<Unit> {
-        failure<IOException> { DocumentRetriever(context).retrieve("query") }
+        failure<IOException> { DocumentRetriever(context, acquireModel = {}).retrieve("query") }
         assertTrue(matches().isEmpty())
+    }
+
+    @Test fun queryWaitsForAcquisitionAndRetriesAfterFailure() = runBlocking<Unit> {
+        val source = select()
+        seed(source, listOf("ready" to vector()))
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        var offline = true
+        val retrieval = retriever(acquire = {
+            entered.complete(Unit)
+            release.await()
+            if (offline) throw IOException("Offline fixture")
+        })
+        val pending = async(Dispatchers.IO) {
+            failure<IOException> { retrieval.retrieve("question") }
+        }
+        try {
+            withTimeout(5_000) { entered.await() }
+            assertEquals(0, opens)
+            assertFalse(ExtractionWork.permit.isLocked)
+            assertFalse(NativeWorkHandoff.documents.isLocked)
+            withContext(Dispatchers.Main) { assertFalse(NativeWorkHandoff.blocked) }
+            release.complete(Unit)
+            withTimeout(5_000) { pending.await() }
+            offline = false
+            assertEquals("ready", (retrieval.retrieve("question") as RetrievalResult.Complete).matches.single().text)
+            assertEquals(1, opens)
+        } finally { release.complete(Unit); pending.cancelAndJoin() }
     }
 
     @Test fun contextRecheckRejectsRevocationReplacementAndSameUriRemovalReaddWithoutSupersedingRequests() = runBlocking<Unit> {
@@ -552,7 +584,7 @@ class DocumentRetrievalTest {
         finally { pending.cancelAndJoin() }
         assertEquals(1, closes)
         assertEquals(old.generation, matches().single().generation)
-        val indexer = DocumentIndexer(context,
+        val indexer = DocumentIndexer(context, acquireModel = {},
             extract = { _, _ -> ExtractedDocument("next", "fixture", "a".repeat(64)) },
             openEmbeddings = { IndexEmbeddings({ listOf(chunk("next")) }, { vector() }, {}) })
         assertTrue(indexer.index(source, DocumentBrowser(resolver).root(source), refresh = true) is IndexResult.Complete)
@@ -560,7 +592,7 @@ class DocumentRetrievalTest {
     }
 
     @Test fun loadEmbedAndCloseFailuresReleaseOwnershipAndPreservePrimaryFailure() = runBlocking<Unit> {
-        failure<IOException> { DocumentRetriever(context, openEmbeddings = { throw IOException("load failed") }).retrieve("query") }
+        failure<IOException> { DocumentRetriever(context, acquireModel = {}, openEmbeddings = { throw IOException("load failed") }).retrieve("query") }
         val primary = IOException("embed failed")
         val cleanup = IOException("close failed")
         val actual = failure<IOException> { matches(retriever(beforeEmbed = { throw primary }, close = { throw cleanup })) }

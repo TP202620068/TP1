@@ -242,8 +242,8 @@
 
 # The new indexing APIs are roots only for the separately compiled instrumentation APK.
 -keep,allowoptimization class com.example.tp1.indexing.DocumentIndexer {
-    public <init>(android.content.Context, com.example.tp1.inference.ModelManager, int, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function0);
-    public <init>(android.content.Context, com.example.tp1.inference.ModelManager, int, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function0, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public <init>(android.content.Context, com.example.tp1.inference.ModelManager, int, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function1);
+    public <init>(android.content.Context, com.example.tp1.inference.ModelManager, int, kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function1, int, kotlin.jvm.internal.DefaultConstructorMarker);
     public java.lang.Object index(com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry, boolean, kotlin.coroutines.Continuation);
     public static java.lang.Object index$default(com.example.tp1.indexing.DocumentIndexer, com.example.tp1.sources.SelectedSource, com.example.tp1.browser.BrowserEntry, boolean, kotlin.coroutines.Continuation, int, java.lang.Object);
 }
@@ -459,4 +459,18 @@
 -keep,allowoptimization class com.example.tp1.indexing.IndexResult$Busy { public static com.example.tp1.indexing.IndexResult$Busy INSTANCE; }
 -keep,allowoptimization class com.example.tp1.inference.ModelManager {
     public java.io.File location$app(com.example.tp1.inference.Model);
+}
+
+# Process acquisition is replaced before Activity launch by offline instrumentation.
+-keep,allowoptimization class com.example.tp1.inference.ModelAcquisition {
+    public static com.example.tp1.inference.ModelAcquisition$Companion Companion;
+    public <init>(kotlinx.coroutines.CoroutineScope, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2);
+    public <init>(kotlinx.coroutines.CoroutineScope, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function2, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public void start();
+    public java.lang.Object acquire(com.example.tp1.inference.Model, kotlin.coroutines.Continuation);
+    public java.lang.Object close(kotlin.coroutines.Continuation);
+}
+-keep,allowoptimization class com.example.tp1.inference.ModelAcquisition$Companion {
+    public com.example.tp1.inference.ModelAcquisition get(android.content.Context);
+    public com.example.tp1.inference.ModelAcquisition replaceForTests(com.example.tp1.inference.ModelAcquisition);
 }

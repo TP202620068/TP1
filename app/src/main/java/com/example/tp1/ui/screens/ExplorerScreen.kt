@@ -28,6 +28,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -89,7 +90,7 @@ internal fun ExplorerScreen(
         if (previousLocation != location) browserListState.scrollToItem(0)
         previousLocation = location
     }
-    var previousRequest by rememberSaveable { mutableStateOf(search.request) }
+    var previousRequest by rememberSaveable { mutableLongStateOf(search.request) }
     LaunchedEffect(search.request) {
         if (previousRequest != search.request && search.showingResults) resultListState.scrollToItem(0)
         previousRequest = search.request
@@ -191,7 +192,7 @@ internal fun ExplorerScreen(
                         Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp))
                 }
                 items(search.rows, key = { it.document.authority + "/" + it.document.providerId }) { row ->
-                    FileRow(FileListItem(row.document.name, FileKind.Document, row.excerpt), metadataMaxLines = 3,
+                    FileRow(FileListItem(row.document.name, FileKind.Document, row.excerpt), metadataMaxLines = 2,
                         modifier = Modifier.padding(horizontal = 16.dp).clickable(enabled = !search.opening, role = Role.Button) {
                             onSearchOpenDocument(row.document)
                         })

@@ -10,6 +10,7 @@ import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.tp1.MainActivity
+import com.example.tp1.OfflineModelAcquisitionRule
 import com.example.tp1.PickerRobot
 import com.example.tp1.awaitSources
 import com.example.tp1.browser.BrowserViewModel
@@ -30,7 +31,8 @@ class SearchModelUiTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val picker = PickerRobot()
-    @get:Rule(order = 0) val productionIndexing = object : ExternalResource() {
+    @get:Rule(order = 0) val offlineAcquisition = OfflineModelAcquisitionRule()
+    @get:Rule(order = 1) val productionIndexing = object : ExternalResource() {
         override fun before() = runBlocking {
             check(ModelManager(context).isAvailable(Model.JinaV5NanoRetrieval)) { "Provision the pinned local Jina model first" }
             IndexingCoordinator.replaceForTests(null)?.close()
@@ -38,7 +40,7 @@ class SearchModelUiTest {
         }
         override fun after() = runBlocking { IndexingCoordinator.replaceForTests(null)?.close(); Unit }
     }
-    @get:Rule(order = 1) val compose = createAndroidComposeRule<MainActivity>()
+    @get:Rule(order = 2) val compose = createAndroidComposeRule<MainActivity>()
     @After fun cleanup() = picker.cleanUp()
 
     @Test fun searchesOutsideCurrentFolderAndOpensOriginalWithReadOnlyGrant() {

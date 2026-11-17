@@ -10,6 +10,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModelStore
 import androidx.test.platform.app.InstrumentationRegistry
 import com.example.tp1.browser.DocumentBrowser
+import com.example.tp1.OfflineModelAcquisitionRule
 import com.example.tp1.chat.ChatConnection
 import com.example.tp1.chat.ChatPhase
 import com.example.tp1.chat.ChatViewModel
@@ -20,7 +21,9 @@ import com.example.tp1.extraction.MarkdownChunk
 import com.example.tp1.extraction.hex
 import com.example.tp1.inference.ManualInference
 import com.example.tp1.inference.Model
+import com.example.tp1.inference.ModelAcquisition
 import com.example.tp1.inference.ModelManager
+import com.example.tp1.inference.NativeWorkHandoff
 import com.example.tp1.inference.FinishReason
 import com.example.tp1.inference.GenerationEvent
 import com.example.tp1.sources.SourceKind
@@ -42,8 +45,10 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.junit.Rule
 
 class AutomaticIndexingTest {
+    @get:Rule val offlineAcquisition = OfflineModelAcquisitionRule()
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
     private val resolver = context.contentResolver
@@ -63,6 +68,7 @@ class AutomaticIndexingTest {
     private var extracts = 0
     private var realExtraction = false
     private var beforeEmbed: suspend () -> Unit = {}
+    private var acquireModel: suspend () -> Unit = {}
     private val selected = mutableSetOf<String>()
 
     private fun fixture(method: String, arg: String? = null, extras: Bundle? = null): Bundle {
@@ -105,7 +111,7 @@ class AutomaticIndexingTest {
         work = IndexingCoordinator(CoroutineScope(SupervisorJob() + Dispatchers.IO), browser::root,
             { source, folder -> browser.children(source, folder) },
             { source, entry, check ->
-                DocumentIndexer(application, checkAdmission = check, extract = { selected, document ->
+                DocumentIndexer(application, checkAdmission = check, acquireModel = { acquireModel() }, extract = { selected, document ->
                     extracts++
                     if (realExtraction) DocumentExtractor(application).extract(selected, document)
                     else {
@@ -146,6 +152,53 @@ class AutomaticIndexingTest {
             model.state.value.sources.forEach { source -> assertNotNull(store.read(source, browser.root(source))) }
         }
         assertNotNull(model.state.value.message)
+    }
+
+    @Test fun pendingAcquisitionWaitsWithoutNativeOwnershipAndRespectsRemoval() = runBlocking {
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val owner = ModelAcquisition(CoroutineScope(SupervisorJob() + Dispatchers.IO), {
+            entered.complete(Unit)
+            release.await()
+        })
+        acquireModel = { owner.acquire(Model.JinaV5NanoRetrieval) }
+        try {
+            val removed = document("acquiring-removed")
+            val retained = document("acquiring-retained")
+            add(listOf(removed, retained))
+            withTimeout(5_000) { entered.await() }
+            withContext(Dispatchers.Main) { owners.clear() }
+            newOwner()
+            assertEquals(0, extracts)
+            assertEquals(0, opens)
+            assertFalse(ExtractionWork.permit.isLocked)
+            assertFalse(NativeWorkHandoff.documents.isLocked)
+            withContext(Dispatchers.Main) {
+                assertFalse(NativeWorkHandoff.blocked)
+                model.remove(removed).join()
+            }
+            release.complete(Unit)
+            finished(retained)
+            assertNull(work.state.value.blocked)
+            assertFalse(removed in work.state.value.sources)
+            assertEquals(1, extracts)
+            assertEquals(1, opens)
+        } finally { release.complete(Unit); owner.close() }
+    }
+
+    @Test fun acquisitionFailureBlocksUntilExplicitRetry() = runBlocking {
+        acquireModel = { throw java.io.IOException("Offline fixture") }
+        val uri = document("acquisition-retry")
+        add(listOf(uri))
+        withTimeout(5_000) { work.state.first { it.blocked == IndexingProblem.Model } }
+        assertEquals(0, extracts)
+        assertEquals(0, opens)
+        assertFalse(NativeWorkHandoff.documents.isLocked)
+        acquireModel = {}
+        withContext(Dispatchers.Main) { model.retryIndexing(uri).join() }
+        finished(uri)
+        assertNull(work.state.value.blocked)
+        assertEquals(1, opens)
     }
 
     @Test fun providerDatabaseFailureDoesNotBlockHealthySourcesOrLeaveARemovalBlocker() = runBlocking {

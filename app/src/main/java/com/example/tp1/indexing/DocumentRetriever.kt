@@ -4,6 +4,7 @@ import android.content.Context
 import com.example.tp1.extraction.ExtractionWork
 import com.example.tp1.inference.EmbeddingSession
 import com.example.tp1.inference.Model
+import com.example.tp1.inference.ModelAcquisition
 import com.example.tp1.inference.ModelManager
 import com.example.tp1.inference.NativeWorkHandoff
 import com.example.tp1.inference.embeddingInput
@@ -44,7 +45,8 @@ internal class DocumentRetriever(
     private val openEmbeddings: suspend () -> RetrievalEmbeddings = {
         val session = EmbeddingSession.open(models)
         RetrievalEmbeddings(session::embedQuery, session::close)
-    }
+    },
+    private val acquireModel: suspend () -> Unit = { ModelAcquisition.get(context).acquire(Model.JinaV5NanoRetrieval) }
 ) {
     private val context = context.applicationContext
 
@@ -67,6 +69,8 @@ internal class DocumentRetriever(
         query: String, search: (IndexStore, FloatArray, CoroutineContext) -> List<RetrievalMatch>
     ): RetrievalResult = withContext(Dispatchers.IO) {
         embeddingInput(query, query = true)
+        acquireModel()
+        currentCoroutineContext().ensureActive()
         NativeWorkHandoff.documents.withLock {
             val handoff = Any()
             var embeddings: RetrievalEmbeddings? = null

@@ -64,8 +64,8 @@ internal class ModelManager(
             coroutine.ensureActive()
             val connection = connect(URL(artifact.url))
             try {
-                connection.connectTimeout = 15_000
-                connection.readTimeout = 15_000
+                connection.connectTimeout = 60_000
+                connection.readTimeout = 120_000
                 connection.useCaches = false
                 connection.instanceFollowRedirects = true
                 connection.setRequestProperty("Accept-Encoding", "identity")
