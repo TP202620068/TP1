@@ -105,6 +105,11 @@ internal suspend fun chunkMarkdown(
 
     for (section in sections.zipWithNext()) {
         val (sectionStart, sectionEnd) = section
+        var contentEnd = sectionEnd
+        while (contentEnd > sectionStart && markdown[contentEnd - 1].isWhitespace()) {
+            if ((sectionEnd - contentEnd) % 1024 == 0) coroutine.ensureActive()
+            contentEnd--
+        }
         var coreStart = sectionStart
         while (coreStart < sectionEnd) {
             coroutine.ensureActive()
@@ -148,6 +153,15 @@ internal suspend fun chunkMarkdown(
                 end = next
                 tokens = expanded
             }
+            // Right context can already cover the final core; do not embed that same tail again.
+            if (coreEnd < contentEnd && end >= contentEnd) {
+                val expanded = count(start, sectionEnd)
+                if (expanded <= maxInputTokens) {
+                    coreEnd = sectionEnd
+                    end = sectionEnd
+                    tokens = expanded
+                }
+            }
             check(tokens in 1..maxInputTokens)
             result += MarkdownChunk(markdown.substring(start, end), byteOffset(start), byteOffset(end),
                 byteOffset(coreStart), byteOffset(coreEnd), markdown.codePointCount(coreStart, coreEnd), tokens)
@@ -162,6 +176,7 @@ private fun nextCharacter(text: String, index: Int): Int = index + Character.cha
 private fun previousCharacter(text: String, index: Int): Int = index - Character.charCount(text.codePointBefore(index))
 
 private val heading = Regex("^ {0,3}#{1,6}(?:\\s|$)")
+private val checklistHeading = Regex("^ {0,3}#{1,6}\\s+[❑☐☑☒]")
 private val listItem = Regex("^\\s*(?:[-+*]|[0-9]+[.)])\\s+")
 private val fence = Regex("^ {0,3}(`{3,}|~{3,})")
 
@@ -206,6 +221,12 @@ private fun markdownBoundaries(text: String, coroutine: CoroutineContext): Pair<
             attachHeading = false
             fenceCharacter = marker.first()
             fenceLength = marker.length
+        } else if (checklistHeading.containsMatchIn(line)) {
+            // PDF checklist labels are list units, not sections that strand a few words in their own chunk.
+            finishProse(lineStart)
+            if (!attachHeading) boundaries.add(lineStart)
+            boundaries.add(end)
+            attachHeading = false
         } else if (heading.containsMatchIn(line)) {
             finishProse(lineStart)
             if (lineStart != 0) sections.add(lineStart)

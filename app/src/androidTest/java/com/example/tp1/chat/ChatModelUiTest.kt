@@ -53,8 +53,8 @@ class ChatModelUiTest {
                         downloadModel = { check(models.isAvailable(Model.Test)) },
                         openModel = {
                             val session = InferenceSession.open(models, Model.Test, CHAT_SYSTEM_PROMPT)
-                            ChatConnection(session::prepare, session::stream, session::cancel, session::closeAsync)
-                        }, retrieve = { RetrievalResult.Complete(emptyList()) })
+                            ChatConnection(session::prepare, session::stream, session::cancel, session::closeAsync, session::countPassageTokens)
+                        }, retrieve = { RetrievalResult.Complete(listOf(ChatGroundingTest.match())) }, checkContext = {})
                 }
             })[ChatViewModel::class.java]
         }

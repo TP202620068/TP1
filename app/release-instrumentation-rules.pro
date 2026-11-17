@@ -105,6 +105,7 @@
     public com.example.tp1.inference.Model getModel();
     public java.lang.Object infer(java.lang.String, kotlin.coroutines.Continuation);
     public java.lang.Object prepare(java.lang.String, java.util.List, kotlin.coroutines.Continuation);
+    public java.lang.Object countPassageTokens(java.lang.String, kotlin.coroutines.Continuation);
     public static java.lang.Object prepare$default(com.example.tp1.inference.InferenceSession, java.lang.String, java.util.List, kotlin.coroutines.Continuation, int, java.lang.Object);
     public kotlinx.coroutines.flow.Flow stream(java.util.List);
     public void cancel();
@@ -203,7 +204,7 @@
     public void openDocument(com.example.tp1.browser.DocumentReference, kotlin.jvm.functions.Function1);
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatConnection {
-    public <init>(kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0);
+    public <init>(kotlin.jvm.functions.Function3, kotlin.jvm.functions.Function1, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function0, kotlin.jvm.functions.Function2);
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatState {
     public <init>(java.lang.String, java.util.List, com.example.tp1.chat.ChatPreparation, com.example.tp1.chat.ChatPhase, com.example.tp1.chat.ChatProblem, boolean, com.example.tp1.chat.ChatOpenProblem, int, kotlin.jvm.internal.DefaultConstructorMarker);
@@ -230,6 +231,7 @@
     public boolean getRunning();
     public boolean getFailed();
     public com.example.tp1.inference.FinishReason getFinish();
+    public boolean getReusable();
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatStateKt {
     public static java.util.List replayMessages(java.util.List);
@@ -292,6 +294,8 @@
     public java.lang.String getText();
     public int getInputTokens();
     public float[] getVector();
+    public int getStartByte();
+    public int getEndByte();
 }
 -keep,allowoptimization class com.example.tp1.inference.NativeWorkHandoff {
     public static com.example.tp1.inference.NativeWorkHandoff INSTANCE;
@@ -303,6 +307,7 @@
 }
 -keep,allowoptimization class com.example.tp1.extraction.MarkdownChunk {
     public <init>(java.lang.String, int, int, int, int, int, int);
+    public static com.example.tp1.extraction.MarkdownChunk copy$default(com.example.tp1.extraction.MarkdownChunk, java.lang.String, int, int, int, int, int, int, int, java.lang.Object);
     public boolean equals(java.lang.Object);
 }
 
@@ -310,10 +315,14 @@
 -keep,allowoptimization class com.example.tp1.indexing.DocumentRetriever {
     public <init>(...);
     public java.lang.Object retrieve(java.lang.String, int, kotlin.coroutines.Continuation);
+    public java.lang.Object searchFiles(java.lang.String, double, kotlin.coroutines.Continuation);
     public java.lang.Object checkContext(java.util.List, kotlin.coroutines.Continuation);
     public static java.lang.Object retrieve$default(com.example.tp1.indexing.DocumentRetriever, java.lang.String, int, kotlin.coroutines.Continuation, int, java.lang.Object);
 }
 -keep,allowoptimization class com.example.tp1.indexing.RetrievalEmbeddings { public <init>(...); }
+-keep,allowoptimization class com.example.tp1.indexing.RetrievalPolicyKt {
+    public static java.util.List selectRagMatches(java.util.List);
+}
 -keep,allowoptimization interface com.example.tp1.indexing.RetrievalResult
 -keep,allowoptimization class com.example.tp1.indexing.RetrievalResult$Complete {
     public <init>(java.util.List);
@@ -321,9 +330,9 @@
 }
 -keep,allowoptimization class com.example.tp1.indexing.RetrievalResult$Busy { public static com.example.tp1.indexing.RetrievalResult$Busy INSTANCE; }
 -keep,allowoptimization class com.example.tp1.indexing.RetrievalMatch {
-    public <init>(java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long);
-    public <init>(java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long, int, kotlin.jvm.internal.DefaultConstructorMarker);
-    public static com.example.tp1.indexing.RetrievalMatch copy$default(com.example.tp1.indexing.RetrievalMatch, java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long, int, java.lang.Object);
+    public <init>(java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long, int, int);
+    public <init>(java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long, int, int, int, kotlin.jvm.internal.DefaultConstructorMarker);
+    public static com.example.tp1.indexing.RetrievalMatch copy$default(com.example.tp1.indexing.RetrievalMatch, java.lang.String, double, long, java.lang.String, int, java.lang.String, java.lang.String, java.lang.String, long, int, int, int, java.lang.Object);
     public java.lang.String getText();
     public double getScore();
     public long getDocumentId();
@@ -332,6 +341,8 @@
     public java.lang.String getDisplayName();
     public java.lang.String getSourceUri();
     public java.lang.String getDocumentUri();
+    public int getStartByte();
+    public int getEndByte();
     public boolean equals(java.lang.Object);
 }
 -keep,allowoptimization class com.example.tp1.browser.DocumentReference {
@@ -349,7 +360,7 @@
     public java.util.List getIncluded();
 }
 -keep,allowoptimization class com.example.tp1.chat.ChatContextKt {
-    public static java.lang.Object prepareChatRequest(java.lang.String, java.util.List, java.util.List, kotlin.jvm.functions.Function3, kotlin.coroutines.Continuation);
+    public static java.lang.Object prepareChatRequest(java.lang.String, java.util.List, java.util.List, kotlin.jvm.functions.Function2, kotlin.jvm.functions.Function3, kotlin.coroutines.Continuation);
 }
 -keep,allowoptimization class com.example.tp1.browser.DocumentReferenceKt {
     public static java.lang.Object documentIntent(android.content.Context, com.example.tp1.browser.DocumentReference, kotlin.coroutines.Continuation);

@@ -29,6 +29,9 @@ internal class InferenceSession private constructor(val model: Model, private va
     suspend fun prepare(text: String, history: List<ChatMessage> = emptyList()): List<ChatMessage> =
         budgetChatMessages(systemPrompt, history, text) { engine.tokenCount(systemPrompt, it) }
 
+    /** Conservative passage budget: the real Chat tokenizer includes a user-role template. */
+    suspend fun countPassageTokens(text: String): Int = engine.tokenCount("", "<document>\n$text\n</document>\n")
+
     fun stream(messages: List<ChatMessage>): Flow<GenerationEvent> = engine.generate(systemPrompt, messages)
 
     /** Stops the current request, retaining loaded weights for the next independent request. */

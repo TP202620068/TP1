@@ -58,7 +58,7 @@ class MarkdownChunkerTest {
     @Test fun coresAdvanceIndependentlyOfSentenceOverlap() {
         val text = ("A".repeat(99) + ". ").repeat(25)
         val result = chunks(text)
-        assertEquals(listOf(303, 303, 303, 303, 303, 303, 303, 303, 101), result.map { it.coreCharacters })
+        assertEquals(listOf(303, 303, 303, 303, 303, 303, 303, 404), result.map { it.coreCharacters })
         assertEquals(0, result.first().startByte)
         assertEquals(404, result.first().endByte)
         assertEquals(202, result[1].startByte)
@@ -67,6 +67,58 @@ class MarkdownChunkerTest {
         assertTrue(result.zipWithNext().all { (a, b) -> a.endByte > b.startByte })
         assertCoverage(text, result)
         assertEquals(result, chunks(text))
+    }
+
+    @Test fun coveredTerminalProseBecomesCoreWithExactUnicodeAndTrailingWhitespace() {
+        val sentence = "A😀 garantía e\u0301 " + "a".repeat(70) + ". "
+        val text = sentence.repeat(4) + "\r\n\t \n"
+        val result = chunks(text)
+        assertEquals(1, result.size)
+        assertEquals(text, result.single().text)
+        assertEquals(text.toByteArray().size, result.single().coreEndByte)
+        assertEquals(text.codePointCount(0, text.length), result.single().coreCharacters)
+        assertCoverage(text, result)
+    }
+
+    @Test fun coveredTerminalTableRowsAreNotEmittedAgain() {
+        val row = "| " + "a".repeat(120) + " |\n"
+        val text = row.repeat(3) + "\n"
+        val result = chunks(text)
+        assertEquals(1, result.size)
+        assertEquals(text, result.single().text)
+        assertCoverage(text, result)
+    }
+
+    @Test fun uncoveredTerminalContentStillGetsItsOwnCore() {
+        val sentence = "A".repeat(99) + ". "
+        val text = sentence.repeat(5)
+        val result = chunks(text)
+        assertEquals(2, result.size)
+        assertEquals(303, result.first().coreEndByte)
+        assertEquals(404, result.first().endByte)
+        assertEquals(303, result.last().coreStartByte)
+        assertCoverage(text, result)
+    }
+
+    @Test fun terminalAbsorptionRecountsWhitespaceAgainstTheHardLimit() {
+        val sentence = "A".repeat(99) + ". "
+        val text = sentence.repeat(4) + "\n\n" + " ".repeat(150) + "\n"
+        val result = chunks(text, 450)
+        assertTrue(result.size > 1)
+        assertEquals(303, result.first().coreEndByte)
+        assertTrue(result.all { it.inputTokens <= 450 })
+        assertCoverage(text, result)
+    }
+
+    @Test fun terminalAbsorptionStopsAtTheNextGenuineHeading() {
+        val first = "# Primero\n" + ("A".repeat(99) + ". ").repeat(4) + "\n\n"
+        val text = first + "# Segundo\nNo pertenece al primer pasaje."
+        val result = chunks(text)
+        val boundary = first.toByteArray().size
+        assertEquals(2, result.size)
+        assertEquals(boundary, result.first().endByte)
+        assertTrue(result.none { it.startByte < boundary && it.endByte > boundary })
+        assertCoverage(text, result)
     }
 
     @Test fun punctuationFreeTextSplitsWithoutExceedingTheHardLimit() {
@@ -157,6 +209,17 @@ class MarkdownChunkerTest {
         val code = "# Código\n```markdown\n# Esto no es otra sección\nvalor = 42\n```\nFin.\n"
         assertEquals(1, chunks(code).size)
         assertCoverage(code, chunks(code))
+    }
+
+    @Test fun pdfCheckboxHeadingsAreListUnitsWithoutChangingSourceBytes() {
+        val items = "### ❑ Fórmula para bebés y pañales\n### ❑ Alimento y agua para mascotas\n".repeat(12)
+        val text = "# Emergencias\n$items# Otra sección\nContenido distinto."
+        val result = chunks(text)
+        assertTrue(result.size < 12)
+        assertTrue(result.first().text.contains("bebés") && result.first().text.contains("mascotas"))
+        val nextSection = text.indexOf("# Otra sección").let { text.substring(0, it).toByteArray().size }
+        assertTrue(result.none { it.startByte < nextSection && it.endByte > nextSection })
+        assertCoverage(text, result)
     }
 
     @Test fun listsAndTablesPreferWholeLineBoundaries() {

@@ -80,7 +80,7 @@ class ChatGroundingTest {
     private fun connection(close: CompletableDeferred<Unit> = CompletableDeferred(Unit)) = ChatConnection(
         prepare = { text, history -> events += "budget"; budgetChatMessages(CHAT_SYSTEM_PROMPT, history, text) { 100 } },
         stream = { requests += it; events += "stream"; answer() }, cancel = {},
-        closeAsync = { closed++; events += "close"; close })
+        closeAsync = { closed++; events += "close"; close }, countPassageTokens = { 100 })
 
     @Test fun submissionYieldsIdleChatWithoutSelfCancellationAndAwaitsQueryCloseBeforeReopening() = runTest(dispatcher) {
         val queryClose = CompletableDeferred<Unit>()
@@ -190,8 +190,10 @@ class ChatGroundingTest {
         chat.retry(); runCurrent()
         assertEquals(3, queries)
         assertEquals(original.id, chat.state.value.turns.single().id)
-        assertEquals("replacement", chat.state.value.turns.single().answer)
+        assertEquals(InstrumentationRegistry.getInstrumentation().targetContext.getString(
+            com.example.tp1.R.string.chat_insufficient_evidence), chat.state.value.turns.single().answer)
         assertTrue(chat.state.value.turns.single().documents.isEmpty())
+        assertEquals(1, requests.size)
     }
 
     @Test fun waitingSubmissionRunsAfterCurrentIndexJobAndProtectsAnswerFromNextJob() = runTest(dispatcher) {
@@ -230,8 +232,56 @@ class ChatGroundingTest {
         matches = emptyList()
         chat.editDraft("second"); chat.send(); runCurrent()
         assertEquals(first, chat.state.value.turns.first())
-        assertEquals(listOf("first", "answer", "second"), requests.last().map { it.text })
+        assertEquals(1, requests.size)
         assertTrue(chat.state.value.turns.last().documents.isEmpty())
+        matches = listOf(match())
+        chat.editDraft("third"); chat.send(); runCurrent()
+        assertEquals(listOf("first", "answer"), requests.last().dropLast(1).map { it.text })
+        assertTrue(requests.last().last().text.endsWith("third"))
+    }
+
+    @Test fun lowScoresRefuseWithoutReopeningBudgetingStreamingOrSources() = runTest(dispatcher) {
+        matches = listOf(match().copy(score = 0.2))
+        start()
+        events.clear()
+        chat.editDraft("question"); chat.send(); runCurrent()
+        assertEquals(1, opened)
+        assertTrue(requests.isEmpty())
+        assertFalse(events.contains("budget"))
+        assertEquals(ChatPhase.Idle, chat.state.value.phase)
+        val turn = chat.state.value.turns.single()
+        assertTrue(turn.answer.isNotBlank())
+        assertTrue(turn.documents.isEmpty())
+        assertNull(turn.finish)
+        assertFalse(turn.reusable)
+        assertFalse(turn.failed)
+        assertEquals("", chat.state.value.draft)
+    }
+
+    @Test fun budgetRemovingAllEvidenceRefusesWithoutStreaming() = runTest(dispatcher) {
+        start(open = { ChatConnection(
+            prepare = { text, history ->
+                if (text.contains("<document>")) throw IllegalArgumentException("No room")
+                budgetChatMessages(CHAT_SYSTEM_PROMPT, history, text) { 100 }
+            }, stream = { error("Must not generate without evidence") }, cancel = {},
+            closeAsync = { CompletableDeferred(Unit) }, countPassageTokens = { 100 }) })
+        chat.editDraft("question"); chat.send(); runCurrent()
+        assertTrue(chat.state.value.turns.single().answer.isNotBlank())
+        assertNull(chat.state.value.turns.single().finish)
+        assertTrue(chat.state.value.turns.single().documents.isEmpty())
+    }
+
+    @Test fun neighboringEvidenceReachesPromptOnceAndKeepsOriginalReferences() = runTest(dispatcher) {
+        val first = match(text = "á uno")
+        val second = match(text = "uno dos").copy(ordinal = 1, startByte = 3, endByte = 10)
+        matches = listOf(second, first)
+        start()
+        chat.editDraft("question"); chat.send(); runCurrent()
+        val prompt = requests.single().last().text
+        assertTrue(prompt.contains("á uno dos"))
+        assertEquals(1, prompt.split("uno").size - 1)
+        assertEquals(1, chat.state.value.turns.single().documents.size)
+        assertTrue(events.contains("authorize"))
     }
 
     @Test fun backgroundAndOwnerClearCancelRetrievalAndWaitForLateModelCleanup() = runTest(dispatcher) {

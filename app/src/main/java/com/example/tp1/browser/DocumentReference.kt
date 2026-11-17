@@ -22,10 +22,13 @@ internal data class DocumentReference(
     val alternatives: List<DocumentAccess>
 )
 
-internal fun documentReferences(matches: List<RetrievalMatch>): List<DocumentReference> = matches.groupBy {
-    val uri = it.documentUri.toUri()
-    requireNotNull(uri.authority) to DocumentsContract.getDocumentId(uri)
-}.map { (identity, chunks) ->
+internal fun documentIdentity(documentUri: String): Pair<String, String> {
+    val uri = documentUri.toUri()
+    return requireNotNull(uri.authority) to DocumentsContract.getDocumentId(uri)
+}
+
+internal fun documentReferences(matches: List<RetrievalMatch>): List<DocumentReference> =
+    matches.groupBy { documentIdentity(it.documentUri) }.map { (identity, chunks) ->
     DocumentReference(identity.first, identity.second, chunks.first().displayName,
         chunks.map { DocumentAccess(it.sourceUri, it.documentUri) }.distinct())
 }

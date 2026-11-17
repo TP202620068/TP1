@@ -66,10 +66,10 @@ class ChatGroundedModelUiTest {
                                 session.stream(messages).onEach { event ->
                                     if (event is com.example.tp1.inference.GenerationEvent.Text && event.value.isNotBlank()) streamed = true
                                 }
-                            }, session::cancel, session::closeAsync)
+                            }, session::cancel, session::closeAsync, session::countPassageTokens)
                         }, retrieve = { query ->
                             queryCount++
-                            DocumentRetriever(activity.application).retrieve(query, k = 5).also {
+                            DocumentRetriever(activity.application).retrieve(query, k = 10).also {
                                 if (it is RetrievalResult.Complete) retrieved = it.matches
                             }
                         })

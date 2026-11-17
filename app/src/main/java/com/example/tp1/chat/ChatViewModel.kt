@@ -10,6 +10,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.example.tp1.browser.DocumentReference
 import com.example.tp1.browser.documentIntent
+import com.example.tp1.R
 import com.example.tp1.inference.ChatMessage
 import com.example.tp1.inference.FinishReason
 import com.example.tp1.inference.GenerationEvent
@@ -20,6 +21,8 @@ import com.example.tp1.inference.NativeWorkHandoff
 import com.example.tp1.indexing.DocumentRetriever
 import com.example.tp1.indexing.RetrievalMatch
 import com.example.tp1.indexing.RetrievalResult
+import com.example.tp1.indexing.RAG_CHUNKS
+import com.example.tp1.indexing.selectRagMatches
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Deferred
@@ -45,7 +48,8 @@ internal class ChatConnection(
     val prepare: suspend (String, List<ChatMessage>) -> List<ChatMessage>,
     val stream: (List<ChatMessage>) -> Flow<GenerationEvent>,
     val cancel: () -> Unit,
-    val closeAsync: () -> Deferred<Unit>
+    val closeAsync: () -> Deferred<Unit>,
+    val countPassageTokens: suspend (String) -> Int
 )
 
 internal class ChatViewModel(
@@ -54,14 +58,14 @@ internal class ChatViewModel(
     private val downloadModel: suspend () -> Unit,
     private val openModel: suspend () -> ChatConnection,
     private val elapsedRealtime: () -> Long = { SystemClock.elapsedRealtime() },
-    private val retrieve: suspend (String) -> RetrievalResult = { DocumentRetriever(application).retrieve(it, k = 5) },
+    private val retrieve: suspend (String) -> RetrievalResult = { DocumentRetriever(application).retrieve(it, k = RAG_CHUNKS) },
     private val checkContext: suspend (List<RetrievalMatch>) -> Unit = { DocumentRetriever(application).checkContext(it) }
 ) : AndroidViewModel(application) {
     constructor(application: Application, savedState: SavedStateHandle) : this(application, savedState,
         downloadModel = { ModelManager(application).download(Model.Test) },
         openModel = {
             val session = InferenceSession.open(ModelManager(application), Model.Test, CHAT_SYSTEM_PROMPT)
-            ChatConnection(session::prepare, session::stream, session::cancel, session::closeAsync)
+            ChatConnection(session::prepare, session::stream, session::cancel, session::closeAsync, session::countPassageTokens)
         })
 
     private val mutableState = MutableStateFlow(run {
@@ -199,6 +203,11 @@ internal class ChatViewModel(
                 }
                 currentCoroutineContext().ensureActive()
                 if (ticket != submissionEpoch || !foreground) throw CancellationException()
+                val selected = selectRagMatches((result as RetrievalResult.Complete).matches)
+                if (selected.isEmpty()) {
+                    insufficientEvidence(input, text, retry)
+                    return@launch
+                }
                 mutableState.value = state.value.copy(phase = ChatPhase.Validating)
                 // The submission reserves Chat now; a document handoff cannot close the newly opened owner.
                 operation?.join()
@@ -207,7 +216,13 @@ internal class ChatViewModel(
                 if (connection == null) loadConnection(++epoch)
                 val owner = checkNotNull(connection)
                 preflightProblem = ChatProblem.ContextLimit
-                val request = prepareChatRequest(input, history, (result as RetrievalResult.Complete).matches, owner.prepare)
+                val request = prepareChatRequest(input, history, selected, owner.countPassageTokens, owner.prepare)
+                currentCoroutineContext().ensureActive()
+                if (ticket != submissionEpoch || !foreground) throw CancellationException()
+                if (request.included.isEmpty()) {
+                    insufficientEvidence(input, text, retry)
+                    return@launch
+                }
                 preflightProblem = ChatProblem.Access
                 if (request.included.isNotEmpty()) checkContext(request.included)
                 currentCoroutineContext().ensureActive()
@@ -258,6 +273,13 @@ internal class ChatViewModel(
             }
         }
         submission!!.start()
+    }
+
+    private fun insufficientEvidence(input: String, draft: String, retry: Boolean) {
+        val turn = ChatTurn(if (retry) state.value.turns.last().id else ++nextTurn, input,
+            answer = getApplication<Application>().getString(R.string.chat_insufficient_evidence))
+        if (!retry && state.value.draft == draft) editDraft("")
+        mutableState.value = state.value.copy(turns = (if (retry) state.value.turns.dropLast(1) else state.value.turns) + turn)
     }
 
     fun stop() {

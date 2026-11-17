@@ -63,6 +63,7 @@
     <string name="browser_provider_error">No se pudo leer esta ubicación. Inténtalo de nuevo.</string>
     <string name="browser_no_viewer">No hay una aplicación compatible para abrir este archivo.</string>
     <string name="chat_retrieving">Consultando documentos indexados…</string>
+    <string name="chat_insufficient_evidence">No encontré información suficientemente relevante en tus documentos indexados para responder.</string>
     <string name="chat_retrieval_error">No se pudieron consultar los documentos. Comprueba el modelo local Jina y el almacenamiento e inténtalo de nuevo.</string>
     <string name="chat_retrieval_busy">La consulta está ocupada. Inténtalo de nuevo.</string>
     <string name="chat_query_limit">La pregunta supera el límite de consulta de 1024 tokens. Acórtala e inténtalo de nuevo.</string>

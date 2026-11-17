@@ -57,13 +57,13 @@ class ChatLifecycleTest {
 
     private fun connection(close: CompletableDeferred<Unit> = CompletableDeferred(Unit)) = ChatConnection(
         prepare = { _, _ -> emptyList() }, stream = { emptyFlow() }, cancel = {},
-        closeAsync = { closed++; close })
+        closeAsync = { closed++; close }, countPassageTokens = { 100 })
 
     private fun start(open: suspend () -> ChatConnection = { connection() }) {
         val application = InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application
         chat = ChatViewModel(application, SavedStateHandle(), {}, { opened++; open() },
             elapsedRealtime = { scheduler.currentTime + sleptMillis },
-            retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
+            retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(listOf(ChatGroundingTest.match())) }, checkContext = {})
         store.put("chat", chat)
         chat.setForeground(true)
         chat.setSelected(true)
@@ -99,7 +99,7 @@ class ChatLifecycleTest {
             stream = { flow {
                 emit(GenerationEvent.Text("Respuesta guardada"))
                 emit(GenerationEvent.Finished(FinishReason.EOG, 2))
-            } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }) }
+            } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }, countPassageTokens = { 100 }) }
         chat.editDraft("Hola")
         chat.send()
         runCurrent()
@@ -128,7 +128,7 @@ class ChatLifecycleTest {
                         emit(GenerationEvent.Finished(FinishReason.EOG, 2))
                         awaitCancellation()
                     } finally { withContext(NonCancellable) { cleanup.await() } }
-                } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }) }
+                } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }, countPassageTokens = { 100 }) }
             chat.editDraft("Hola")
             chat.send()
             runCurrent()
@@ -275,7 +275,7 @@ class ChatLifecycleTest {
         start { ChatConnection(prepare = { text, _ -> listOf(ChatMessage(ChatRole.User, text)) }, stream = { flow {
             emit(GenerationEvent.Text("Partial reply"))
             awaitCancellation()
-        } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }) }
+        } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }, countPassageTokens = { 100 }) }
         chat.editDraft("Question")
         chat.send()
         runCurrent()
@@ -361,7 +361,7 @@ class ChatLifecycleTest {
     @Test fun successfulConversationSurvivesHandoffAndLoadingChatCanYield() = runTest(dispatcher) {
         start { ChatConnection(prepare = { text, _ -> listOf(ChatMessage(ChatRole.User, text)) }, stream = { flow {
             emit(GenerationEvent.Text("Answer")); emit(GenerationEvent.Finished(FinishReason.EOG, 1))
-        } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }) }
+        } }, cancel = {}, closeAsync = { closed++; CompletableDeferred(Unit) }, countPassageTokens = { 100 }) }
         chat.editDraft("Question")
         chat.send()
         runCurrent()

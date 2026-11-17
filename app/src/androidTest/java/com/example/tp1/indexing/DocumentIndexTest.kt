@@ -137,6 +137,8 @@ class DocumentIndexTest {
         assertEquals(markdown, saved.chunks.single().text)
         assertEquals(passage().inputTokens, saved.chunks.single().inputTokens)
         assertArrayEquals(vector(), saved.chunks.single().vector, 0f)
+        assertEquals(0, saved.chunks.single().startByte)
+        assertEquals(markdown.toByteArray().size, saved.chunks.single().endByte)
         assertEquals(1024, saved.identity.maxInputTokens)
         assertEquals("f243c19458bcd8162632b89bfeaf02b077b24c2d812e5ece1b73bd380732ba29", saved.identity.modelSha256)
         assertEquals(MessageDigest.getInstance("SHA-256").digest(markdown.toByteArray()).hex(), saved.identity.inputSha256)
@@ -148,7 +150,8 @@ class DocumentIndexTest {
                 assertFalse(it.columnNames.any { name -> "recipe" in name || "markdown" in name || "fingerprint" in name })
             }
             db.rawQuery("SELECT * FROM chunks LIMIT 0", null).use {
-                assertFalse(it.columnNames.any { name -> "byte" in name || "core" in name })
+                assertTrue("start_byte" in it.columnNames && "end_byte" in it.columnNames)
+                assertFalse(it.columnNames.any { name -> "core" in name })
             }
         }
         assertEquals(1, closes)
@@ -412,6 +415,8 @@ class DocumentIndexTest {
             assertThrows(SQLiteException::class.java) { db.execSQL("INSERT INTO chunks SELECT * FROM chunks LIMIT 1") }
             assertThrows(SQLiteException::class.java) { db.execSQL("UPDATE chunks SET vector=?", arrayOf(byteArrayOf(0))) }
             assertThrows(SQLiteException::class.java) { db.execSQL("UPDATE chunks SET document_id=-1") }
+            assertThrows(SQLiteException::class.java) { db.execSQL("UPDATE chunks SET start_byte=-1") }
+            assertThrows(SQLiteException::class.java) { db.execSQL("UPDATE chunks SET end_byte=end_byte+1") }
             val corrupt = ByteBuffer.allocate(2048).order(ByteOrder.LITTLE_ENDIAN).putFloat(Float.NaN).array()
             db.execSQL("UPDATE chunks SET vector=? WHERE document_id=?", arrayOf(corrupt, read()!!.documentId))
         }
@@ -486,34 +491,54 @@ class DocumentIndexTest {
         }
     }
 
-    @Test fun migrationPreservesCompletedChunksAndDropsObsoleteMetadataAndCandidates() {
-        val directory = File(context.noBackupFilesDir, "migration-${UUID.randomUUID()}")
-        val file = File(directory, "index.db")
-        try {
-            previousDatabase(file)
-            SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
-                db.execSQL("""INSERT INTO documents SELECT 38,source_uri,document_uri || '-empty','empty-build',
-                    display_name,input_sha256,markdown_sha256,extraction_recipe,chunking_recipe,core_tokens,
-                    context_tokens,max_input_tokens,embedding_fingerprint,0 FROM documents WHERE id=37""".trimIndent())
-            }
-            IndexStore(context, file).use { store ->
-                val saved = checkNotNull(store.read(source, entry))
-                assertEquals(37L, saved.documentId)
-                assertEquals("complete-build", saved.generation)
-                assertEquals("a".repeat(64), saved.identity.inputSha256)
-                assertEquals(markdown, saved.chunks.single().text)
-                assertArrayEquals(vector(), saved.chunks.single().vector, 0f)
-            }
-            SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
-                assertEquals(2, db.version)
-                db.rawQuery("SELECT * FROM documents LIMIT 0", null).use { assertFalse("markdown_sha256" in it.columnNames) }
-                db.rawQuery("SELECT count(*) FROM chunks", null).use { assertTrue(it.moveToFirst()); assertEquals(1, it.getInt(0)) }
-                db.rawQuery("SELECT active_generation,chunk_count FROM documents WHERE id=38", null).use {
-                    assertTrue(it.moveToFirst()); assertEquals("empty-build", it.getString(0)); assertEquals(0, it.getInt(1))
+    @Test fun supportedLegacyVersionsRecreateOnlyDisposableIndexTables() {
+        for (version in 1..3) {
+            val directory = File(context.noBackupFilesDir, "migration-${UUID.randomUUID()}")
+            val file = File(directory, "index.db")
+            try {
+                if (version == 3) {
+                    IndexStore(context, file).use { store ->
+                        val candidate = store.stage(store.request(source, entry))
+                        store.append(candidate, 0, passage(), vector(), 1024)
+                        store.publish(candidate, IndexIdentity("Existing", "a".repeat(64), "b".repeat(64), 1024),
+                            1, kotlin.coroutines.EmptyCoroutineContext)
+                        store.discard(candidate)
+                    }
+                } else previousDatabase(file)
+                SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { it.version = version }
+                IndexStore(context, file).use { assertNull(it.read(source, entry)) }
+                SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+                    assertEquals(4, db.version)
+                    for (table in listOf("documents", "chunks")) db.rawQuery("SELECT count(*) FROM $table", null).use {
+                        assertTrue(it.moveToFirst()); assertEquals(0, it.getInt(0))
+                    }
+                    db.rawQuery("SELECT * FROM chunks LIMIT 0", null).use {
+                        assertTrue("start_byte" in it.columnNames && "end_byte" in it.columnNames)
+                    }
+                    db.rawQuery("PRAGMA foreign_key_check", null).use { assertFalse(it.moveToFirst()) }
                 }
-                db.rawQuery("PRAGMA foreign_key_check", null).use { assertFalse(it.moveToFirst()) }
+                assertTrue(source.available)
+                assertNotNull(DocumentBrowser(resolver).root(source))
+            } finally { directory.deleteRecursively() }
+        }
+    }
+
+    @Test fun previousChunkingPolicyRebuildsEvenWhenInputAndModelAreUnchanged() = runBlocking<Unit> {
+        val indexer = indexer()
+        var previous = complete(indexer.index(source, entry))
+        for (refresh in listOf(false, true)) {
+            SQLiteDatabase.openDatabase(IndexStore.databaseFile(context).path, null, SQLiteDatabase.OPEN_READWRITE).use {
+                it.version = 3
             }
-        } finally { directory.deleteRecursively() }
+            val rebuilt = complete(indexer.index(source, entry, refresh))
+            assertFalse(rebuilt.unchanged)
+            assertNotEquals(previous.generation, rebuilt.generation)
+            assertEquals(markdown, read()!!.chunks.single().text)
+            previous = rebuilt
+        }
+        assertEquals(3, extractions)
+        assertEquals(3, embeds)
+        assertEquals(3, closes)
     }
 
     @Test fun failedMigrationRollsBackWithoutDestroyingExistingData() {
@@ -521,6 +546,11 @@ class DocumentIndexTest {
         val file = File(directory, "index.db")
         try {
             previousDatabase(file, "unrecognized model")
+            SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+                db.setForeignKeyConstraintsEnabled(true)
+                db.execSQL("CREATE TABLE guard(document_id INTEGER REFERENCES documents(id) ON DELETE RESTRICT)")
+                db.execSQL("INSERT INTO guard VALUES(37)")
+            }
             assertThrows(SQLiteException::class.java) { IndexStore(context, file) }
             SQLiteDatabase.openDatabase(file.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
                 assertEquals(1, db.version)
@@ -556,7 +586,7 @@ class DocumentIndexTest {
         val chat = withContext(Dispatchers.Main) {
             ChatViewModel(context.applicationContext as Application, SavedStateHandle(), {}, {
                 val loaded = InferenceSession.open(models, Model.Test, CHAT_SYSTEM_PROMPT)
-                ChatConnection(loaded::prepare, loaded::stream, loaded::cancel, loaded::closeAsync)
+                ChatConnection(loaded::prepare, loaded::stream, loaded::cancel, loaded::closeAsync, loaded::countPassageTokens)
             }).also { owners.put("chat", it); it.setForeground(true); it.setSelected(true) }
         }
         try {

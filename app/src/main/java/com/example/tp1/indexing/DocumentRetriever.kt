@@ -13,6 +13,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.CoroutineContext
 
 internal data class RetrievalMatch(
     val text: String,
@@ -23,7 +24,9 @@ internal data class RetrievalMatch(
     val displayName: String,
     val sourceUri: String,
     val documentUri: String,
-    val sourceEpoch: Long = 0
+    val sourceEpoch: Long = 0,
+    val startByte: Int = 0,
+    val endByte: Int = startByte + text.toByteArray(Charsets.UTF_8).size
 )
 
 internal sealed interface RetrievalResult {
@@ -46,8 +49,23 @@ internal class DocumentRetriever(
     private val context = context.applicationContext
 
     /** k is 1..50. Scores are cosine similarities, not confidence or an answerability threshold. */
-    suspend fun retrieve(query: String, k: Int = 5): RetrievalResult = withContext(Dispatchers.IO) {
+    suspend fun retrieve(query: String, k: Int = 5): RetrievalResult {
         require(k in 1..MAX_RETRIEVAL_K) { "k must be between 1 and $MAX_RETRIEVAL_K" }
+        return executeQuery(query) { store, vector, coroutine ->
+            store.search(vector, k, models.profile(Model.JinaV5NanoRetrieval).artifact.sha256, coroutine)
+        }
+    }
+
+    suspend fun searchFiles(query: String, minScore: Double): RetrievalResult {
+        require(minScore.isFinite() && minScore in -1.0..1.0)
+        return executeQuery(query) { store, vector, coroutine ->
+            store.searchFiles(vector, minScore, models.profile(Model.JinaV5NanoRetrieval).artifact.sha256, coroutine)
+        }
+    }
+
+    private suspend fun executeQuery(
+        query: String, search: (IndexStore, FloatArray, CoroutineContext) -> List<RetrievalMatch>
+    ): RetrievalResult = withContext(Dispatchers.IO) {
         embeddingInput(query, query = true)
         NativeWorkHandoff.documents.withLock {
             val handoff = Any()
@@ -78,7 +96,7 @@ internal class DocumentRetriever(
             synchronized(ExtractionWork.sourceLock) {
                 coroutine.ensureActive()
                 IndexStore(context).use { store ->
-                    RetrievalResult.Complete(store.search(vector, k, models.profile(Model.JinaV5NanoRetrieval).artifact.sha256, coroutine))
+                    RetrievalResult.Complete(search(store, vector, coroutine))
                 }
             }
         }

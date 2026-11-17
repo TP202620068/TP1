@@ -115,7 +115,13 @@ class DocumentRetrievalTest {
     private fun seed(source: SelectedSource, chunks: List<Pair<String, FloatArray>>, model: String = hash,
                      entry: BrowserEntry = DocumentBrowser(resolver).root(source)): IndexStore.Candidate = IndexStore(context).use { store ->
         val candidate = store.stage(store.request(source, entry))
-        for ((ordinal, value) in chunks.withIndex()) store.append(candidate, ordinal, chunk(value.first), value.second, 32)
+        var start = 0
+        for ((ordinal, value) in chunks.withIndex()) {
+            val bytes = value.first.toByteArray().size
+            store.append(candidate, ordinal, chunk(value.first).copy(startByte = start, endByte = start + bytes,
+                coreStartByte = start, coreEndByte = start + bytes), value.second, 32)
+            start += bytes
+        }
         store.publish(candidate, IndexIdentity(entry.metadata.name, "a".repeat(64), model, 32), chunks.size, kotlin.coroutines.EmptyCoroutineContext)
         store.discard(candidate)
         candidate
@@ -167,6 +173,30 @@ class DocumentRetrievalTest {
         assertEquals(listOf("  warranty question?  ", "  warranty question?  "), queries)
         assertEquals(2, opens); assertEquals(opens, closes)
         for (source in listOf(a, b)) assertEquals(0, fixture("fixture-retrieval-info", id(source)).getInt("opens"))
+    }
+
+    @Test fun fileSearchRanksAllDocumentsWithoutChunkCapOrLengthBonus() = runBlocking<Unit> {
+        fun score(value: Float) = vector(value, kotlin.math.sqrt(1f - value * value))
+        val long = select()
+        val short = select()
+        val low = select()
+        seed(long, List(60) { "long $it" to score(0.6f) })
+        seed(short, listOf("best passage" to score(0.9f)))
+        seed(low, listOf("irrelevant" to score(0.2f)))
+        val found = (retriever().searchFiles("question", 0.4) as RetrievalResult.Complete).matches
+        assertEquals(listOf(short.record.uri, long.record.uri), found.map { it.sourceUri })
+        assertEquals(listOf("best passage", "long 0"), found.map { it.text })
+        assertTrue(found.all { it.endByte - it.startByte == it.text.toByteArray().size })
+    }
+
+    @Test fun corruptNonWinningRangesFailEvenBelowSearchFloor() = runBlocking<Unit> {
+        val source = select()
+        seed(source, listOf("winner" to vector(), "low" to vector(-1f)))
+        SQLiteDatabase.openDatabase(IndexStore.databaseFile(context).path, null, SQLiteDatabase.OPEN_READWRITE).use { db ->
+            db.execSQL("PRAGMA ignore_check_constraints=ON")
+            db.execSQL("UPDATE chunks SET end_byte=end_byte+1 WHERE ordinal=1")
+        }
+        failure<IOException> { retriever().searchFiles("question", 0.4) }
     }
 
     @Test fun validatesInputBeforeOpeningAndDoesNotAcceptInvalidQueryVectors() = runBlocking<Unit> {
@@ -242,7 +272,7 @@ class DocumentRetrievalTest {
                 ChatConnection({ text, history -> com.example.tp1.inference.budgetChatMessages(
                     com.example.tp1.chat.CHAT_SYSTEM_PROMPT, history, text) { 100 } }, { flow {
                     emit(GenerationEvent.Text("answer")); emit(GenerationEvent.Finished(FinishReason.EOG, 1))
-                } }, {}, { CompletableDeferred(Unit) })
+                 } }, {}, { CompletableDeferred(Unit) }, { 100 })
             }, retrieve = { RetrievalResult.Complete(found) }, checkContext = { retriever().checkContext(it) }).also {
                 owners.put("chat", it); it.setForeground(true); it.setSelected(true)
             }
@@ -396,10 +426,14 @@ class DocumentRetrievalTest {
         val child = DocumentBrowser(resolver).root(document).copy(sourceUri = treeUri,
             uri = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(treeUri), id(document)).toString())
         seed(document, listOf("same" to vector()))
-        seed(tree, listOf("same" to vector()), entry = child)
+        seed(tree, listOf("same" to vector(0f, 1f)), entry = child)
         val result = matches()
         assertEquals(2, result.size)
         assertEquals(2, result.map { it.documentId }.distinct().size)
+        val files = (retriever().searchFiles("question", 0.4) as RetrievalResult.Complete).matches
+        assertEquals(2, files.size)
+        assertEquals(2, com.example.tp1.browser.documentReferences(files).single().alternatives.size)
+        assertEquals(listOf(1.0, 0.0), files.map { it.score })
         sources.remove(sources.restore().sources, document.record.uri)
         assertEquals(treeUri, matches().single().sourceUri)
     }
@@ -541,8 +575,8 @@ class DocumentRetrievalTest {
         ChatViewModel(application, SavedStateHandle(), {}, {
             ChatConnection({ text, _ -> listOf(ChatMessage(ChatRole.User, text)) }, { flow {
                 emit(GenerationEvent.Text("Partial answer")); awaitCancellation()
-            } }, {}, { CompletableDeferred(Unit) })
-        }, retrieve = { RetrievalResult.Complete(emptyList()) }).also {
+             } }, {}, { CompletableDeferred(Unit) }, { 100 })
+         }, retrieve = { RetrievalResult.Complete(listOf(com.example.tp1.chat.ChatGroundingTest.match())) }, checkContext = {}).also {
             owners.put("chat", it); it.setForeground(true); it.setSelected(true)
         }
     }

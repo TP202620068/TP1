@@ -114,7 +114,7 @@ class AutomaticIndexingTest {
                     }
                 }, openEmbeddings = {
                     opens++
-                    IndexEmbeddings({ text -> listOf(MarkdownChunk(text, 0, text.length, 0, text.length, text.length, 8)) },
+                    IndexEmbeddings({ text -> listOf(MarkdownChunk(text, 0, text.toByteArray().size, 0, text.toByteArray().size, text.length, 8)) },
                         { beforeEmbed(); FloatArray(512).apply { this[0] = 1f } }, {})
                 }).index(source, entry, refresh = false)
             }, { source -> ExtractionWork.requireSavedRead(application, source.record) })
@@ -353,8 +353,8 @@ class AutomaticIndexingTest {
                     answer.await()
                     emit(GenerationEvent.Text("Kept answer"))
                     emit(GenerationEvent.Finished(FinishReason.EOG, 2, 0, null))
-                } }, { cancelled = true }, { CompletableDeferred(Unit) })
-            }, retrieve = { RetrievalResult.Complete(emptyList()) }).also {
+                 } }, { cancelled = true }, { CompletableDeferred(Unit) }, { 100 })
+             }, retrieve = { RetrievalResult.Complete(listOf(com.example.tp1.chat.ChatGroundingTest.match())) }, checkContext = {}).also {
                 owners.put("chat", it); it.setForeground(true); it.setSelected(true)
             }
         }

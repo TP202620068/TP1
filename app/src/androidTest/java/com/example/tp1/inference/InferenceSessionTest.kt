@@ -240,8 +240,14 @@ class InferenceSessionTest {
         fun match(text: String, ordinal: Int = 0) = com.example.tp1.indexing.RetrievalMatch(
             text, 1.0, 1, "generation", ordinal, "file", "content://fixture/document/file", "content://fixture/document/file")
         try {
+            val merged = com.example.tp1.chat.prepareChatRequest("question", emptyList(),
+                listOf(match("a b"), match("b c", 1).copy(startByte = 2, endByte = 5)),
+                session::countPassageTokens, session::prepare)
+            assertTrue(merged.messages.last().text.contains("a b c"))
+            assertEquals(1, merged.messages.last().text.split("<document>").size - 1)
+            assertEquals(2, merged.included.size)
             suspend fun candidate(size: Int) = com.example.tp1.chat.prepareChatRequest("question", emptyList(),
-                listOf(match("a" + " a".repeat(size)))) { text, _ -> listOf(ChatMessage(ChatRole.User, text)) }
+                listOf(match("a" + " a".repeat(size))), session::countPassageTokens) { text, _ -> listOf(ChatMessage(ChatRole.User, text)) }
             var low = 0
             var high = 4096
             while (low < high) {
@@ -252,12 +258,12 @@ class InferenceSessionTest {
             assertEquals(3584, engine.tokenCount(system, boundary.messages))
             val history = listOf(ChatMessage(ChatRole.User, "old"), ChatMessage(ChatRole.Assistant, "answer"))
             val request = com.example.tp1.chat.prepareChatRequest("question", history,
-                boundary.included + match("lower ranked", 1), session::prepare)
+                boundary.included + match("lower ranked", 2), session::countPassageTokens, session::prepare)
             assertEquals(boundary.messages, request.messages)
             assertEquals(boundary.included, request.included)
             assertEquals(3584, engine.tokenCount(system, request.messages))
             try {
-                com.example.tp1.chat.prepareChatRequest("a" + " a".repeat(4096), emptyList(), boundary.included, session::prepare)
+                com.example.tp1.chat.prepareChatRequest("a" + " a".repeat(4096), emptyList(), boundary.included, session::countPassageTokens, session::prepare)
                 fail("Oversized question accepted")
             } catch (_: IllegalArgumentException) { }
         } finally { session.close() }

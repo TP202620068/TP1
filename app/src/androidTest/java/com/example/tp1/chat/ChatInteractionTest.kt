@@ -58,13 +58,16 @@ class ChatInteractionTest {
     private fun connection(prepare: suspend (String, List<ChatMessage>) -> List<ChatMessage> = { text, history ->
         budgetChatMessages(CHAT_SYSTEM_PROMPT, history, text) { 100 }
     }) = ChatConnection(prepare, { messages -> requests += messages; streams.removeFirst() },
-        cancel = { stopped++ }, closeAsync = { closed++; CompletableDeferred(Unit) })
+        cancel = { stopped++ }, closeAsync = { closed++; CompletableDeferred(Unit) }, countPassageTokens = { 100 })
 
     private fun show(download: suspend () -> Unit = {}, open: suspend () -> ChatConnection = { connection() },
-                     savedState: SavedStateHandle = SavedStateHandle(), initialTab: AppTab = AppTab.Chat) {
+                     savedState: SavedStateHandle = SavedStateHandle(), initialTab: AppTab = AppTab.Chat,
+                     retrieve: suspend (String) -> com.example.tp1.indexing.RetrievalResult = {
+                         com.example.tp1.indexing.RetrievalResult.Complete(listOf(ChatGroundingTest.match()))
+                     }) {
         InstrumentationRegistry.getInstrumentation().runOnMainSync {
             chat = ChatViewModel(InstrumentationRegistry.getInstrumentation().targetContext.applicationContext as Application,
-                savedState, download, open, retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
+                savedState, download, open, retrieve = retrieve, checkContext = {})
             store.put("chat", chat)
             chat.setForeground(true)
         }
@@ -85,6 +88,20 @@ class ChatInteractionTest {
     private fun send(text: String) {
         compose.onNodeWithContentDescription("Tu pregunta").performTextInput(text)
         compose.onNodeWithContentDescription("Enviar pregunta").performClick()
+    }
+
+    @Test fun emptyEvidenceShowsAppResponseWithoutGenerationOrSourceFooter() {
+        show(retrieve = { com.example.tp1.indexing.RetrievalResult.Complete(emptyList()) })
+        awaitReady()
+        send("Pregunta")
+        val message = InstrumentationRegistry.getInstrumentation().targetContext.getString(
+            com.example.tp1.R.string.chat_insufficient_evidence)
+        compose.onNodeWithText(message).assertIsDisplayed()
+        compose.onNodeWithContentDescription("Fuentes: 1").assertDoesNotExist()
+        compose.runOnIdle {
+            assertTrue(requests.isEmpty())
+            assertNull(chat.state.value.turns.single().finish)
+        }
     }
 
     private fun complete(text: String) = flow {
@@ -174,7 +191,8 @@ class ChatInteractionTest {
         compose.waitUntil(5_000) { chat.state.value.turns.size == 2 && chat.state.value.phase == ChatPhase.Idle }
         compose.runOnIdle {
             assertEquals(2, requests.size)
-            assertEquals(listOf("Primera pregunta", "Hola mundo", "Segunda pregunta"), requests.last().map { it.text })
+            assertEquals(listOf("Primera pregunta", "Hola mundo"), requests.last().dropLast(1).map { it.text })
+            assertTrue(requests.last().last().text.endsWith("Segunda pregunta"))
         }
     }
 
@@ -206,7 +224,7 @@ class ChatInteractionTest {
             send("Siguiente pregunta")
             compose.waitUntil(5_000) { chat.state.value.turns.last().answer == "Respuesta completa" }
             compose.onAllNodesWithText("Pregunta original").assertCountEquals(1)
-            compose.runOnIdle { assertEquals(listOf("Siguiente pregunta"), requests.last().map { it.text }) }
+            compose.runOnIdle { assertEquals(1, requests.last().size); assertTrue(requests.last().last().text.endsWith("Siguiente pregunta")) }
         } finally { cleanup.complete(Unit) }
     }
 
@@ -254,7 +272,7 @@ class ChatInteractionTest {
         }
         compose.onNodeWithContentDescription("Enviar pregunta").performClick()
         compose.waitUntil(5_000) { chat.state.value.turns.singleOrNull()?.answer == "Listo" }
-        compose.runOnIdle { assertEquals("Conservar borrador", requests.single().last().text) }
+        compose.runOnIdle { assertTrue(requests.single().last().text.endsWith("Conservar borrador")) }
     }
 
     @Test fun nativeFailureIsVisibleAndRetryReplacesTheSameTurn() {
@@ -288,7 +306,7 @@ class ChatInteractionTest {
         compose.onNodeWithText("No se pudo completar la respuesta. Inténtalo de nuevo.").assertIsDisplayed()
         compose.onNodeWithText("Reintentar").performClick()
         compose.waitUntil(5_000) { chat.state.value.turns.single().answer == "Recuperada" }
-        compose.runOnIdle { assertEquals(listOf("Pregunta"), requests.last().map { it.text }) }
+        compose.runOnIdle { assertEquals(1, requests.last().size); assertTrue(requests.last().last().text.endsWith("Pregunta")) }
     }
 
     @Test fun timeoutBeforeFirstTextShowsStatusAndAllowsRetry() {
@@ -409,7 +427,7 @@ class ChatInteractionTest {
         compose.onNodeWithText("123   456").assertIsDisplayed()
         compose.onNodeWithContentDescription("Tu pregunta").assertTextEquals("Nuevo borrador")
         compose.runOnIdle {
-            assertEquals("123   456", requests.single().last().text)
+            assertTrue(requests.single().last().text.endsWith("123   456"))
             assertEquals("123   456", chat.state.value.turns.single().input)
         }
     }
@@ -439,7 +457,7 @@ class ChatInteractionTest {
         compose.runOnIdle {
             assertEquals(ChatPreparation.Ready, chat.state.value.preparation)
             assertEquals(0, closed)
-            assertEquals("123", requests.single().last().text)
+            assertTrue(requests.single().last().text.endsWith("123"))
         }
     }
 }

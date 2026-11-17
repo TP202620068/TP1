@@ -11,6 +11,7 @@ import android.system.OsConstants
 import androidx.core.database.sqlite.transaction
 import com.example.tp1.browser.BrowserEntry
 import com.example.tp1.browser.DocumentBrowser
+import com.example.tp1.browser.documentIdentity
 import com.example.tp1.extraction.ExtractionWork
 import com.example.tp1.extraction.MarkdownChunk
 import com.example.tp1.extraction.hex
@@ -41,13 +42,16 @@ internal data class IndexSnapshot(
     val documentId: Long, val generation: String, val identity: IndexIdentity, val chunks: List<IndexedChunk>
 )
 
-internal data class IndexedChunk(val ordinal: Int, val text: String, val inputTokens: Int, val vector: FloatArray)
+internal data class IndexedChunk(
+    val ordinal: Int, val text: String, val inputTokens: Int, val vector: FloatArray,
+    val startByte: Int, val endByte: Int
+)
 
 /** Call on IO. Lock order is sourceLock -> SQLite; no native work runs here. */
 internal class IndexStore(context: Context, private val file: File = databaseFile(context)) : Closeable {
     private val context = context.applicationContext
     private val owned = mutableSetOf<String>()
-    private val helper = object : SQLiteOpenHelper(this.context, file.absolutePath, null, 2,
+    private val helper = object : SQLiteOpenHelper(this.context, file.absolutePath, null, 4,
         { throw SQLiteException("Index database is corrupt") }) {
         override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
         override fun onCreate(db: SQLiteDatabase) {
@@ -65,36 +69,20 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
                 document_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                 generation TEXT NOT NULL, ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
                 text TEXT NOT NULL, input_tokens INTEGER NOT NULL CHECK(input_tokens > 0),
+                start_byte INTEGER NOT NULL CHECK(typeof(start_byte)='integer' AND start_byte >= 0),
+                end_byte INTEGER NOT NULL CHECK(typeof(end_byte)='integer' AND end_byte > start_byte
+                    AND end_byte <= 2147483647 AND end_byte-start_byte=length(CAST(text AS BLOB))),
                 vector BLOB NOT NULL CHECK(typeof(vector)='blob' AND length(vector)=2048),
                 PRIMARY KEY(document_id, generation, ordinal)
             )""".trimIndent())
         }
 
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-            if (oldVersion != 1 || newVersion != 2) throw SQLiteException("Index schema migration required")
-            db.execSQL("ALTER TABLE documents RENAME TO previous_documents")
-            db.execSQL("ALTER TABLE chunks RENAME TO previous_chunks")
+            if (oldVersion !in 1..3 || newVersion != 4) throw SQLiteException("Index schema migration required")
+            // Disposable indexes must rebuild when source ranges or chunk boundaries change.
+            db.execSQL("DROP TABLE chunks")
+            db.execSQL("DROP TABLE documents")
             onCreate(db)
-            db.rawQuery("SELECT * FROM previous_documents WHERE active_generation IS NOT NULL", null).use { cursor ->
-                while (cursor.moveToNext()) {
-                    val modelHash = cursor.text("embedding_fingerprint").split('/', limit = 4).getOrNull(2)
-                    if (modelHash == null || !modelHash.matches(Regex("[0-9a-f]{64}"))) {
-                        throw SQLiteException("Cannot identify stored embedding model")
-                    }
-                    db.insertOrThrow("documents", null, ContentValues().apply {
-                        put("id", cursor.long("id")); put("source_uri", cursor.text("source_uri"))
-                        put("document_uri", cursor.text("document_uri")); put("active_generation", cursor.text("active_generation"))
-                        put("display_name", cursor.text("display_name")); put("input_sha256", cursor.text("input_sha256"))
-                        put("model_sha256", modelHash); put("max_input_tokens", cursor.int("max_input_tokens"))
-                        put("chunk_count", cursor.int("chunk_count"))
-                    })
-                }
-            }
-            db.execSQL("""INSERT INTO chunks(document_id,generation,ordinal,text,input_tokens,vector)
-                SELECT c.document_id,c.generation,c.ordinal,c.text,c.input_tokens,c.vector
-                FROM previous_chunks c JOIN documents d ON d.id=c.document_id AND d.active_generation=c.generation""".trimIndent())
-            db.execSQL("DROP TABLE previous_chunks")
-            db.execSQL("DROP TABLE previous_documents")
         }
     }
 
@@ -161,8 +149,22 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
 
     /** The source lock freezes saved membership and app publications throughout scan/fetch, never native work. */
     fun search(query: FloatArray, k: Int, modelSha256: String, coroutine: CoroutineContext): List<RetrievalMatch> =
+        RetrievalRanking(query, k).let { ranking -> search(modelSha256, coroutine, ranking::offer, ranking::ranked) }
+
+    /** Keep access alternatives even when only another snapshot of the same file passes the floor. */
+    fun searchFiles(query: FloatArray, minScore: Double, modelSha256: String, coroutine: CoroutineContext): List<RetrievalMatch> {
+        require(minScore.isFinite() && minScore in -1.0..1.0)
+        val ranking = FileRanking(query)
+        val matches = search(modelSha256, coroutine, ranking::offer, ranking::ranked)
+        val files = matches.filter { it.score >= minScore }.map { documentIdentity(it.documentUri) }.toSet()
+        return matches.filter { documentIdentity(it.documentUri) in files }
+    }
+
+    private fun search(
+        modelSha256: String, coroutine: CoroutineContext,
+        offer: (Long, String, Int, FloatArray) -> Unit, ranked: () -> List<ScoredChunk>
+    ): List<RetrievalMatch> =
         synchronized(ExtractionWork.sourceLock) {
-            val ranking = RetrievalRanking(query, k)
             val sources = SourceStore(context).readForRetrieval().associateBy { it.record.uri }
             val documents = mutableMapOf<Long, SearchDocument>()
             val db = helper.readableDatabase
@@ -179,19 +181,19 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
                     documents[active.documentId] = document
                     if (document.eligible) forEachChunk(active) { chunk ->
                         coroutine.ensureActive()
-                        ranking.offer(active.documentId, active.generation, chunk.ordinal, chunk.vector)
+                        offer(active.documentId, active.generation, chunk.ordinal, chunk.vector)
                     }
                 }
             }
-            val matches = ranking.ranked().map { winner ->
+            val matches = ranked().map { winner ->
                 coroutine.ensureActive()
                 val document = documents.getValue(winner.documentId)
-                db.rawQuery("SELECT text FROM chunks WHERE document_id=? AND generation=? AND ordinal=?",
+                db.rawQuery("SELECT text,start_byte,end_byte FROM chunks WHERE document_id=? AND generation=? AND ordinal=?",
                     arrayOf(winner.documentId.toString(), winner.generation, winner.ordinal.toString())).use { cursor ->
                     if (!cursor.moveToFirst()) throw IOException("Missing winning index chunk")
                     RetrievalMatch(cursor.text("text"), winner.score, winner.documentId, winner.generation, winner.ordinal,
                         document.active.identity.displayName, document.source.record.uri, document.entry.uri,
-                        epochs[document.source.record.uri] ?: 0)
+                        epochs[document.source.record.uri] ?: 0, cursor.byteOffset("start_byte"), cursor.byteOffset("end_byte"))
                 }
             }
             val current = SourceStore(context).readForRetrieval().associateBy { it.record.uri }
@@ -239,9 +241,11 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
             while (cursor.moveToNext()) {
                 val text = cursor.text("text")
                 val tokens = cursor.int("input_tokens")
-                validateChunk(text, tokens, active.identity.maxInputTokens)
+                val start = cursor.byteOffset("start_byte")
+                val end = cursor.byteOffset("end_byte")
+                validateChunk(text, tokens, active.identity.maxInputTokens, start, end)
                 if (cursor.int("ordinal") != count) throw IOException("Corrupt index chunk order")
-                consume(IndexedChunk(count++, text, tokens, decodeVector(cursor.getBlob(cursor.getColumnIndexOrThrow("vector")))))
+                consume(IndexedChunk(count++, text, tokens, decodeVector(cursor.getBlob(cursor.getColumnIndexOrThrow("vector"))), start, end))
             }
         }
         if (count != active.count) throw IOException("Incomplete active index generation")
@@ -265,10 +269,11 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
         synchronized(ExtractionWork.sourceLock) {
             checkCurrent(candidate.ticket)
             check(candidate.generation in owned)
-            validateChunk(chunk.text, chunk.inputTokens, maxInputTokens)
+            validateChunk(chunk.text, chunk.inputTokens, maxInputTokens, chunk.startByte, chunk.endByte)
             helper.writableDatabase.insertOrThrow("chunks", null, ContentValues().apply {
                 put("document_id", candidate.documentId); put("generation", candidate.generation); put("ordinal", ordinal)
                 put("text", chunk.text); put("input_tokens", chunk.inputTokens); put("vector", encodeVector(vector))
+                put("start_byte", chunk.startByte); put("end_byte", chunk.endByte)
             })
         }
 
@@ -403,6 +408,12 @@ internal class IndexStore(context: Context, private val file: File = databaseFil
 private fun Cursor.text(name: String) = getString(getColumnIndexOrThrow(name))
 private fun Cursor.int(name: String) = getInt(getColumnIndexOrThrow(name))
 private fun Cursor.long(name: String) = getLong(getColumnIndexOrThrow(name))
+private fun Cursor.byteOffset(name: String): Int {
+    val column = getColumnIndexOrThrow(name)
+    val value = getLong(column)
+    if (getType(column) != Cursor.FIELD_TYPE_INTEGER || value !in 0..Int.MAX_VALUE.toLong()) throw IOException("Invalid source byte offset")
+    return value.toInt()
+}
 private fun Cursor.identity() = IndexIdentity(text("display_name"), text("input_sha256"), text("model_sha256"), int("max_input_tokens"))
 
 private fun IndexIdentity.values() = ContentValues().apply {
@@ -415,9 +426,10 @@ internal fun validateIdentity(identity: IndexIdentity) {
     require(identity.maxInputTokens in 1..8192)
 }
 
-private fun validateChunk(text: String, inputTokens: Int, maxInputTokens: Int) {
+private fun validateChunk(text: String, inputTokens: Int, maxInputTokens: Int, startByte: Int, endByte: Int) {
     if (text.isBlank() || '\u0000' in text || inputTokens !in 1..maxInputTokens ||
-        text.toByteArray(Charsets.UTF_8).size + EMBEDDING_DOCUMENT_PREFIX.length > EMBEDDING_INPUT_BYTES) throw IOException("Invalid index chunk")
+        text.toByteArray(Charsets.UTF_8).size + EMBEDDING_DOCUMENT_PREFIX.length > EMBEDDING_INPUT_BYTES ||
+        startByte < 0 || endByte.toLong() - startByte != text.toByteArray(Charsets.UTF_8).size.toLong()) throw IOException("Invalid index chunk")
 }
 
 internal fun encodeVector(vector: FloatArray): ByteArray {

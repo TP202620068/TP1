@@ -13,6 +13,7 @@ import com.example.tp1.indexing.DocumentRetriever
 import com.example.tp1.indexing.IndexingState
 import com.example.tp1.indexing.RetrievalMatch
 import com.example.tp1.indexing.RetrievalResult
+import com.example.tp1.indexing.SEARCH_MIN_SCORE
 import com.example.tp1.inference.EMBEDDING_INPUT_BYTES
 import com.example.tp1.inference.embeddingInput
 import com.example.tp1.sources.SelectedSource
@@ -37,7 +38,7 @@ internal class SearchViewModel(
     private val intentForDocument: suspend (DocumentReference) -> Intent = { documentIntent(application, it) }
 ) : AndroidViewModel(application) {
     constructor(application: Application, savedState: SavedStateHandle) : this(application, savedState,
-        retrieve = { DocumentRetriever(application).retrieve(it, k = 5) })
+        retrieve = { DocumentRetriever(application).searchFiles(it, SEARCH_MIN_SCORE) })
 
     private val mutableState = MutableStateFlow(run {
         val draft = savedState.get<String>("searchDraft").orEmpty()
