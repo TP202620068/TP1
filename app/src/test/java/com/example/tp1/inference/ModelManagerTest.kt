@@ -10,6 +10,7 @@ import java.net.SocketTimeoutException
 import java.net.URL
 import java.nio.file.Files
 import java.nio.file.attribute.BasicFileAttributes
+import java.nio.file.attribute.DosFileAttributes
 import java.security.MessageDigest
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -22,19 +23,25 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.After
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 
 class ModelManagerTest {
-    @get:Rule val temporary = TemporaryFolder()
+    @get:Rule val temporary: TemporaryFolder = TemporaryFolder.builder().assureDeletion().build()
+    private val windowsHost = System.getProperty("os.name")?.startsWith("Windows") == true
     private val bytes = "verified model fixture 😀".toByteArray()
     private val artifact = ModelArtifact("fixture.gguf", "https://example.invalid/model", bytes.size.toLong(),
         MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it.toInt() and 0xff) })
 
     private fun manager(directory: File, connection: () -> HttpURLConnection) =
         ModelManager(directory, { Model.Test.profile.copy(artifact = artifact) }, { connection() })
+
+    @After fun makeWindowsFixturesDeletable() {
+        if (windowsHost) temporary.root.walkTopDown().filter(File::isFile).forEach { it.setWritable(true) }
+    }
 
     @Test fun verifiedDownloadAndOfflineCacheReuse() = runBlocking<Unit> {
         val directory = temporary.newFolder()
@@ -98,12 +105,16 @@ class ModelManagerTest {
             file.writeBytes(invalid)
             val originalInode = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java).fileKey()
             assertFalse(models.isAvailable(Model.Test))
-            FileInputStream(file).use { original ->
+            // On Windows FileInputStream blocks replacement while the file is open.
+            val original = if (windowsHost) null else FileInputStream(file)
+            original.use {
                 models.download(Model.Test)
-                assertArrayEquals(invalid, original.readBytes())
+                if (it != null) assertArrayEquals(invalid, it.readBytes())
             }
             assertArrayEquals(bytes, file.readBytes())
-            assertNotEquals(originalInode, Files.readAttributes(file.toPath(), BasicFileAttributes::class.java).fileKey())
+            if (originalInode != null) {
+                assertNotEquals(originalInode, Files.readAttributes(file.toPath(), BasicFileAttributes::class.java).fileKey())
+            }
             assertTrue(models.isAvailable(Model.Test))
             assertTrue(connection.disconnected)
             assertEquals(setOf(artifact.name, ".publish.lock"), directory.list()!!.toSet())
@@ -237,20 +248,22 @@ class ModelManagerTest {
             val directory = temporary.newFolder()
             val destination = File(directory, artifact.name)
             if (repair) destination.writeBytes(ByteArray(bytes.size))
-            var winningInode: Any? = null
+            lateinit var winner: BasicFileAttributes
             val input = object : ByteArrayInputStream(bytes) {
                 override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
                     val count = super.read(buffer, offset, length)
                     if (count < 0) {
                         ModelFile.provision(destination, artifact, ByteArrayInputStream(bytes)) { }
-                        winningInode = Files.readAttributes(destination.toPath(), BasicFileAttributes::class.java).fileKey()
+                        winner = Files.readAttributes(destination.toPath(), BasicFileAttributes::class.java)
                     }
                     return count
                 }
             }
             ModelFile.provision(destination, artifact, input) { }
-            assertNotNull(winningInode)
-            assertEquals(winningInode, Files.readAttributes(destination.toPath(), BasicFileAttributes::class.java).fileKey())
+            winner.fileKey()?.let {
+                assertEquals(it, Files.readAttributes(destination.toPath(), BasicFileAttributes::class.java).fileKey())
+            }
+            if (windowsHost) assertTrue(Files.readAttributes(destination.toPath(), DosFileAttributes::class.java).isReadOnly)
             assertArrayEquals(bytes, destination.readBytes())
             assertEquals(setOf(artifact.name, ".publish.lock"), directory.list()!!.toSet())
         }

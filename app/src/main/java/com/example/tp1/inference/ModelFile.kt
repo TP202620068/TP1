@@ -20,6 +20,8 @@ internal class ModelIntegrityException(message: String) : IOException(message)
 
 /** Shared verified publication. Valid cached inodes are retained; corrupt ones can be atomically replaced. */
 internal object ModelFile {
+    private val windowsHost = System.getProperty("os.name")?.startsWith("Windows") == true
+
     fun verify(file: File, artifact: ModelArtifact, checkActive: () -> Unit) {
         FileInputStream(file).use { input ->
             if (input.channel.size() != artifact.bytes) throw ModelIntegrityException("Model size does not match pinned artifact")
@@ -46,7 +48,11 @@ internal object ModelFile {
             failure = error
             throw error
         } finally {
-            try { Files.deleteIfExists(staged.toPath()) } catch (cleanup: Throwable) {
+            try {
+                // Windows won't delete a read-only file, even if no stream is open.
+                if (windowsHost && staged.exists()) staged.setWritable(true)
+                Files.deleteIfExists(staged.toPath())
+            } catch (cleanup: Throwable) {
                 if (failure == null) throw cleanup else failure.addSuppressed(cleanup)
             }
         }
@@ -68,7 +74,8 @@ internal object ModelFile {
                     checkActive()
                     Files.move(staged.toPath(), destination.toPath(), ATOMIC_MOVE)
                 }
-                FileChannel.open(directory.toPath(), READ).use { it.force(true) }
+                // Windows FileChannel cannot open a directory for syncing.
+                if (!windowsHost) FileChannel.open(directory.toPath(), READ).use { it.force(true) }
             }
         }
     }
